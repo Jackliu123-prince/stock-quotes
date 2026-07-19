@@ -72,3 +72,59 @@ node server.js          # 默认 http://localhost:3000
 - **页面打开但行情一直“更新失败”**：多半是服务正在冷启动，等几十秒后点“↻ 刷新”。
 - **想换默认股票列表**：在页面输入框直接添加/移除即可，列表存在本地浏览器。
 - **想改代码重新部署**：推送到 GitHub 后，Render 会自动重新构建（可在 Dashboard 里看到 Deploy 进度）。
+
+---
+
+## 从零到上线：完整流程（建仓库 → 推送 → 连 Render）
+
+下面把前面所有步骤串成一条可照抄的命令流。假设你本地已有 Git，且本目录 `render-stock-site/` 已 `git init` 并提交。
+
+### 第 1 步：GitHub 上建仓库
+1. 打开 https://github.com/new ，仓库名填 `stock-quotes`，**选 Public（公开）**。
+2. **不要**勾选 "Add a README" / .gitignore / license（本目录已自带，避免冲突）。
+3. 点 **Create repository**，进入后复制仓库的 HTTPS 地址，形如：
+   `https://github.com/<你的用户名>/stock-quotes.git`
+
+### 第 2 步：本地推送（在本目录执行）
+```bash
+cd render-stock-site
+
+# （推荐）把提交身份改成你自己的 GitHub 账号，贡献才会算到你名下
+git config user.name  "你的名字"
+git config user.email "你的GitHub邮箱"
+
+# 关联远程并推送
+git branch -M main
+git remote add origin https://github.com/<你的GitHub用户名>/stock-quotes.git
+git push -u origin main
+```
+> ⚠️ GitHub 已不支持账号密码登录 Git。推送时密码框请填 **Personal Access Token**（GitHub → Settings → Developer settings → Personal access tokens 生成，勾选 `repo`）。
+> 若本地配了 SSH key，可把 `remote add` 地址换成 `git@github.com:<用户名>/stock-quotes.git`。
+
+### 第 3 步：Render 连仓库部署
+1. 打开 https://dashboard.render.com → 右上角 **New + → Web Service**。
+2. 选 **Build and deploy from a Git repository** → 连接 GitHub → 选中 `stock-quotes` 仓库。
+3. 配置（基本自动识别，确认一下）：
+   - **Name**：`stock-quotes`
+   - **Runtime**：Node
+   - **Build Command**：留空（无依赖，`npm install` 秒过）
+   - **Start Command**：`npm start`
+   - **Instance Type**：务必选 **Free**（默认可能是付费档 ⚠️）
+4. 点 **Create Web Service**，等 1~2 分钟构建完成。
+5. 拿到地址 `https://stock-quotes-xxxx.onrender.com`，打开即是用。
+
+### 后续：改代码怎么更新
+```bash
+# 在本目录改完文件后
+git add -A
+git commit -m "你的修改说明"
+git push
+```
+Render 会自动检测推送并重新构建部署，无需手动操作。
+
+### 本地预览（不部署也能看）
+```bash
+node server.js          # 默认 http://localhost:3000
+# 或指定端口： PORT=8080 node server.js
+```
+访问 http://localhost:3000 ，接口在 http://localhost:3000/api/stocks?symbols=sh600519,sz000858
