@@ -1,26 +1,13 @@
-// Render 上线包 · 纯 Node 原生 HTTP 服务（零依赖）
-// 同时承担两件事：
-//   1) 静态托管前端（index.html / style.css / app.js）
-//   2) 提供 /api/stocks?symbols=sh600519,sz000858 代理接口
-//      （腾讯财经实时行情 GBK 解码 + 东方财富分红送配）
-//
-// Render 免费层会“空闲 15 分钟后休眠、下次访问冷启动 30~60 秒”，
-// 本服务无需数据库、启动即用，冷启动极快。
-//
-// 部署：Render 会自动执行 `npm install`（本包无依赖，秒过）然后 `npm start`。
-// 端口：读取 process.env.PORT（Render 注入），本地默认 3000。
+// Netlify Function：/api/stocks 代理
+// 由 netlify.toml 的 redirect 把 /api/stocks 映射到 /.netlify/functions/stocks
+// 逻辑移植自原 Render server.js（腾讯财经 GBK 行情 + 东方财富分红送配）。
+// 使用 iconv-lite 解码 GBK，确保在 Node 函数环境里稳定不乱码。
 
-import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import iconv from 'iconv-lite';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.PORT || 3000;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
-const gbk = new TextDecoder('gbk');
 
-// ============ 行情代理逻辑（移植自 Cloudflare _worker.js） ============
+// ============ 行情代理逻辑 ============
 
 const cache = new Map(); // key -> { ts, data }
 const TTL = { tencent: 3000, dividend: 6 * 3600 * 1000 };
@@ -38,8 +25,8 @@ async function fetchTencent(symbols) {
   if (hit) return hit;
   const url = 'https://qt.gtimg.cn/q=' + symbols.join(',');
   const res = await fetch(url, { headers: { Referer: 'https://finance.qq.com/', 'User-Agent': UA } });
-  const buf = await res.arrayBuffer();
-  const text = gbk.decode(buf);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const text = iconv.decode(buf, 'gbk');
   const out = {};
   const re = /v_(\w+)="([^"]*)";/g;
   let m;
@@ -167,77 +154,28 @@ function normalizeSymbol(input) {
   return null;
 }
 
-// ============ 静态文件服务 ============
+// ============ Netlify Function 入口 ============
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.ico': 'image/x-icon',
-  '.png': 'image/png',
-  '.svg': 'image/svg+xml',
-  '.txt': 'text/plain; charset=utf-8'
-};
-
-function serveStatic(req, res, urlPath) {
-  let rel = urlPath === '/' ? '/index.html' : urlPath;
-  // 防目录穿越
-  const filePath = path.join(__dirname, path.normalize(rel));
-  if (!filePath.startsWith(__dirname)) {
-    res.writeHead(403); res.end('Forbidden'); return;
+export async function handler(event, context) {
+  try {
+    const params = event.queryStringParameters || {};
+    const raw = (params.symbols || '').split(',');
+    const symbols = [...new Set(raw.map(normalizeSymbol).filter(Boolean))];
+    const data = await getStockData(symbols);
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Access-Control-Allow-Origin': '*'
+      },
+      body: JSON.stringify({ updated: Date.now(), data })
+    };
+  } catch (e) {
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ error: String((e && e.message) || e) })
+    };
   }
-  fs.readFile(filePath, (err, data) => {
-    if (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('404 Not Found');
-      return;
-    }
-    const ext = path.extname(filePath).toLowerCase();
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
-    res.end(data);
-  });
 }
-
-function sendJSON(res, obj, status = 200) {
-  const body = JSON.stringify(obj);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'Access-Control-Allow-Origin': '*'
-  });
-  res.end(body);
-}
-
-const server = http.createServer(async (req, res) => {
-  const u = new URL(req.url, 'http://localhost');
-
-  if (u.pathname === '/api/stocks') {
-    try {
-      const raw = (u.searchParams.get('symbols') || '').split(',');
-      const symbols = [...new Set(raw.map(normalizeSymbol).filter(Boolean))];
-      const data = await getStockData(symbols);
-      sendJSON(res, { updated: Date.now(), data });
-    } catch (e) {
-      sendJSON(res, { error: String((e && e.message) || e) }, 500);
-    }
-    return;
-  }
-
-  // 健康检查（Render 用，也可自定义）
-  if (u.pathname === '/healthz') {
-    res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('ok'); return;
-  }
-
-  if (req.method === 'GET' || req.method === 'HEAD') {
-    serveStatic(req, res, u.pathname);
-    return;
-  }
-
-  res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('Method Not Allowed');
-});
-
-server.listen(PORT, () => {
-  console.log(`股票行情服务已启动: http://localhost:${PORT}`);
-});

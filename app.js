@@ -183,9 +183,9 @@ attachSort('stockTable', refreshStocks);
   el.className = 'badge ' + (s.open ? 'open' : 'closed');
 })();
 
-// auto refresh
+// auto refresh（每 120 秒一次，控制 Netlify 免费层函数调用次数）
 let timer = null;
-function startAuto() { stopAuto(); timer = setInterval(refreshStocks, 10000); }
+function startAuto() { stopAuto(); timer = setInterval(refreshStocks, 120000); }
 function stopAuto() { if (timer) clearInterval(timer); }
 $('#autoToggle').addEventListener('change', e => e.target.checked ? startAuto() : stopAuto());
 

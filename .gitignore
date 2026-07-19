@@ -1,12 +1,3 @@
-# 依赖与本地产物（本包零依赖，这里仅为通用防护）
 node_modules/
-npm-debug.log*
-*.log
-
-# 环境变量 / 密钥（本项目暂不需要，留作规范）
-.env
-.env.local
-
-# 系统 / 编辑器
-.DS_Store
-Thumbs.db
+package-lock.json
+.netlify/

@@ -1,0 +1,10 @@
+[build]
+  command = "npm install"
+  publish = "."
+  functions = "netlify/functions"
+
+# 把前端调用的 /api/stocks 映射到 Netlify Function
+[[redirects]]
+  from = "/api/stocks"
+  to = "/.netlify/functions/stocks"
+  status = 200

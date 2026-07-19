@@ -1,13 +1,16 @@
 {
-  "name": "stock-quotes-render",
+  "name": "stock-quotes-site",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "股票行情单页（含 PB/PE/ROE/分红率/股息率/定估收益率），Node 原生服务，适配 Render 免费层",
+  "description": "股票行情单页（Netlify 版：静态前端 + Functions 代理）",
   "scripts": {
-    "start": "node server.js"
+    "start": "echo \"静态站点由 Netlify CDN 托管，无需 node 启动\""
+  },
+  "dependencies": {
+    "iconv-lite": "^0.6.3"
   },
   "engines": {
-    "node": "22.x"
+    "node": ">=18"
   }
 }
