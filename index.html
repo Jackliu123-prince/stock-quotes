@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>股票行情 · 估值与分红</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">📊</span>
+      <div>
+        <h1>股票行情</h1>
+        <p class="sub">实时行情 · PB/PE · ROE · 分红率 · 股息率 · 定估收益率</p>
+      </div>
+    </div>
+    <div class="status">
+      <span id="marketStatus" class="badge">--</span>
+      <span id="lastUpdate" class="muted">尚未更新</span>
+      <button id="refreshBtn" class="btn">↻ 刷新</button>
+      <label class="auto"><input type="checkbox" id="autoToggle" checked /> 自动</label>
+    </div>
+  </header>
+
+  <!-- 股票行情 -->
+  <section id="stock" class="panel active">
+    <div class="toolbar">
+      <div class="add-form">
+        <input id="stockInput" type="text" placeholder="股票代码，如 600519 或 sh600519" />
+        <button id="stockAdd" class="btn primary">+ 添加股票</button>
+      </div>
+      <div class="legend">
+        <span class="lg"><i class="dot red"></i>涨</span>
+        <span class="lg"><i class="dot green"></i>跌</span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="stockTable">
+        <thead>
+          <tr>
+            <th data-key="code" class="sortable">代码</th>
+            <th data-key="name" class="sortable">名称</th>
+            <th data-key="price" class="sortable num">现价</th>
+            <th data-key="changePct" class="sortable num">涨跌%</th>
+            <th data-key="amountYi" class="sortable num">成交额(亿)</th>
+            <th data-key="pb" class="sortable num">PB</th>
+            <th data-key="peTTM" class="sortable num">动态PE(ttm)</th>
+            <th data-key="roe" class="sortable num">ROE</th>
+            <th data-key="payoutRatio" class="sortable num">分红率</th>
+            <th data-key="dividendYield" class="sortable num">股息率</th>
+            <th data-key="estReturn" class="sortable num">定估收益率</th>
+            <th data-key="mktCapYi" class="sortable num">总市值(亿)</th>
+            <th data-key="time" class="num">时间</th>
+            <th class="num">操作</th>
+          </tr>
+        </thead>
+        <tbody id="stockBody"></tbody>
+      </table>
+    </div>
+    <p class="hint">股票列表可自由编辑：输入代码即可添加（自动识别沪深市场），点击行末"移除"删除。列表保存在浏览器本地。成交额以"亿"为单位（保留 4 位小数）；其后依次为 PB、动态PE(ttm)、ROE（=PB÷动态PE×100）、分红率、股息率、定估收益率、总市值(亿)。其中 分红率 = 每股股利÷每股收益、股息率 = 每股股利÷现价（均基于最近一个自然年度已实施分红方案），定估收益率 = (1−分红率)×ROE + 股息率。数据来源：腾讯财经、东方财富分红送配。</p>
+  </section>
+
+  <footer class="foot">
+    数据来源：腾讯财经实时行情 · 东方财富分红送配 ｜ 仅供研究参考，不构成投资建议
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

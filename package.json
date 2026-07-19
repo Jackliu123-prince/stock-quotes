@@ -1,0 +1,13 @@
+{
+  "name": "stock-quotes-render",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "股票行情单页（含 PB/PE/ROE/分红率/股息率/定估收益率），Node 原生服务，适配 Render 免费层",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

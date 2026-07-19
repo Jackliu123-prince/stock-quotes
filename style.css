@@ -1,0 +1,148 @@
+:root {
+  --bg: #f4f6fb;
+  --card: #ffffff;
+  --ink: #1f2733;
+  --muted: #8a94a6;
+  --line: #e7ebf2;
+  --brand: #2b6cff;
+  --brand-d: #1d4fd0;
+  --red: #e23a3a;      /* 涨 / 溢价 */
+  --red-bg: #fdeaea;
+  --green: #1aa15a;    /* 跌 / 折价 */
+  --green-bg: #e8f6ee;
+  --hot: #ff8a00;
+  --hot-bg: #fff3e0;
+  --shadow: 0 2px 12px rgba(31,39,51,.06);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* top bar */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 22px; background: var(--card); border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 20;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo { font-size: 28px; }
+.topbar h1 { margin: 0; font-size: 19px; letter-spacing: .5px; }
+.sub { margin: 0; color: var(--muted); font-size: 12px; }
+.status { display: flex; align-items: center; gap: 12px; }
+.muted { color: var(--muted); font-size: 12px; }
+.badge { padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; background: var(--line); color: var(--muted); }
+.badge.open { background: var(--green-bg); color: var(--green); }
+.badge.closed { background: var(--red-bg); color: var(--red); }
+.auto { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; }
+
+.btn {
+  border: 1px solid var(--line); background: #fff; color: var(--ink);
+  padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  transition: .15s;
+}
+.btn:hover { border-color: var(--brand); color: var(--brand); }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+.btn.primary:hover { background: var(--brand-d); }
+.btn.danger { color: var(--red); border-color: #f3caca; }
+.btn.danger:hover { background: var(--red-bg); }
+
+/* tabs */
+.tabs { display: flex; gap: 6px; padding: 14px 22px 0; }
+.tab {
+  border: none; background: transparent; padding: 10px 18px; cursor: pointer;
+  font-size: 14px; color: var(--muted); border-radius: 10px 10px 0 0; font-weight: 600;
+}
+.tab.active { background: var(--card); color: var(--brand); box-shadow: var(--shadow); }
+
+/* panels */
+.panel { display: none; padding: 16px 22px 40px; }
+.panel.active { display: block; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.add-form { display: flex; gap: 8px; flex-wrap: wrap; }
+.add-form input {
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 13px; outline: none;
+}
+.add-form input:focus { border-color: var(--brand); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+.lg { display: flex; align-items: center; gap: 5px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.dot.red { background: var(--red); } .dot.green { background: var(--green); } .dot.hot { background: var(--hot); }
+
+/* table */
+.table-wrap { background: var(--card); border-radius: 12px; box-shadow: var(--shadow); overflow: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 980px; }
+thead th {
+  position: sticky; top: 0; background: #fafbfe; text-align: left; padding: 11px 12px;
+  font-size: 12px; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+th.num, td.num { text-align: right; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--brand); }
+th.sortable::after { content: "⇅"; margin-left: 4px; opacity: .35; font-size: 10px; }
+th.sort-asc::after { content: "▲"; opacity: 1; color: var(--brand); }
+th.sort-desc::after { content: "▼"; opacity: 1; color: var(--brand); }
+tbody td { padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tbody tr:hover { background: #f8faff; }
+tbody tr:last-child td { border-bottom: none; }
+
+.code { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--muted); }
+.name { font-weight: 600; }
+
+.up { color: var(--red); }
+.down { color: var(--green); }
+.flat { color: var(--muted); }
+
+/* premium cells */
+.prem-cell { font-weight: 600; border-radius: 6px; padding: 2px 6px; display: inline-block; min-width: 56px; text-align: right; }
+.prem-up { color: var(--red); background: var(--red-bg); }
+.prem-down { color: var(--green); background: var(--green-bg); }
+.signal { box-shadow: 0 0 0 2px var(--hot) inset; }
+
+.hint { color: var(--muted); font-size: 12px; margin: 12px 2px 0; line-height: 1.7; }
+.foot { text-align: center; color: var(--muted); font-size: 12px; padding: 24px; }
+
+.empty { text-align: center; color: var(--muted); padding: 40px; }
+
+/* LOF 套利卡片网格（半宽紧凑） */
+.lof-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+.lof-card {
+  background: var(--card); border-radius: 12px; box-shadow: var(--shadow);
+  padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;
+}
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; }
+.ch-left { min-width: 0; }
+.c-name { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-code { color: var(--muted); font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.c-price-row { display: flex; align-items: baseline; gap: 10px; }
+.c-price { font-size: 22px; font-weight: 800; }
+.c-chg { font-size: 14px; font-weight: 700; }
+.c-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+.c-cell { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.c-label { color: var(--muted); font-size: 12px; }
+.c-val { font-weight: 600; font-size: 13px; text-align: right; }
+.c-date { color: var(--muted); font-style: normal; font-size: 11px; margin-left: 3px; font-weight: 400; }
+.c-val .prem-cell { min-width: 0; }
+
+/* LOF 基金表：指数列 */
+.idx { white-space: nowrap; }
+.idx-nm { font-weight: 600; }
+.sub { color: var(--muted); font-size: 11px; }
+
+.btn.sm { padding: 3px 9px; font-size: 12px; line-height: 1.4; }
+.btn.danger.sm { border-radius: 7px; }
+
+@media (max-width: 720px) {
+  .topbar, .tabs, .panel { padding-left: 12px; padding-right: 12px; }
+  .status .muted { display: none; }
+}
