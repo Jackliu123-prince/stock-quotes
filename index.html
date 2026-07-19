@@ -3,28 +3,111 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>股票行情 · 估值与分红</title>
+  <title>行情中心 · 自选 / LOF基金 / 股票</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="logo">📊</span>
+      <span class="logo">📈</span>
       <div>
-        <h1>股票行情</h1>
-        <p class="sub">实时行情 · PB/PE · ROE · 分红率 · 股息率 · 定估收益率</p>
+        <h1>行情中心</h1>
+        <p class="sub">自选 · LOF基金套利 · 股票估值与分红</p>
       </div>
     </div>
     <div class="status">
       <span id="marketStatus" class="badge">--</span>
+      <span id="refreshMode" class="muted">--</span>
       <span id="lastUpdate" class="muted">尚未更新</span>
       <button id="refreshBtn" class="btn">↻ 刷新</button>
       <label class="auto"><input type="checkbox" id="autoToggle" checked /> 自动</label>
     </div>
   </header>
 
+  <nav class="tabs">
+    <button class="tab active" data-tab="self">⭐ 自选</button>
+    <button class="tab" data-tab="lof">📑 LOF基金</button>
+    <button class="tab" data-tab="stock">📊 股票行情</button>
+  </nav>
+
+  <!-- 自选 -->
+  <section id="self" class="panel active">
+    <div class="toolbar">
+      <div class="add-form">
+        <input id="selfInput" type="text" placeholder="基金代码，如 161725 或 sz161725" />
+        <button id="selfAdd" class="btn primary">+ 加入自选</button>
+      </div>
+      <div class="legend">
+        <span class="lg"><i class="dot red"></i>涨/溢价</span>
+        <span class="lg"><i class="dot green"></i>跌/折价</span>
+        <span class="lg"><i class="dot hot"></i>套利信号</span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="selfTable">
+        <thead>
+          <tr>
+            <th data-key="code" class="sortable">代码</th>
+            <th data-key="name" class="sortable">名称</th>
+            <th data-key="price" class="sortable num">现价</th>
+            <th data-key="changePct" class="sortable num">涨跌%</th>
+            <th data-key="bid" class="sortable num">买一</th>
+            <th data-key="ask" class="sortable num">卖一</th>
+            <th data-key="dwjz" class="sortable num">单位净值</th>
+            <th data-key="gsz" class="sortable num">估值</th>
+            <th data-key="premiumNow" class="sortable num">溢价率</th>
+            <th data-key="bidPremium" class="sortable num">买一溢价</th>
+            <th data-key="askDiscount" class="sortable num">卖一折价</th>
+            <th class="num">操作</th>
+          </tr>
+        </thead>
+        <tbody id="selfBody"></tbody>
+      </table>
+    </div>
+    <p class="hint">自选列表保存在浏览器本地，可自由增删。溢价率 = (现价 − 估值) ÷ 估值；买一溢价即“卖出可得溢价”，卖一折价即“买入成本折价”。估值缺失时回退到最新单位净值。数据来源：腾讯财经、东方财富。</p>
+  </section>
+
+  <!-- LOF 基金 -->
+  <section id="lof" class="panel">
+    <div class="toolbar">
+      <div class="add-form">
+        <input id="lofInput" type="text" placeholder="LOF基金代码，如 161725 或 sz161725" />
+        <button id="lofAdd" class="btn primary">+ 添加基金</button>
+      </div>
+      <div class="legend">
+        <span class="lg"><i class="dot red"></i>溢价</span>
+        <span class="lg"><i class="dot green"></i>折价</span>
+        <span class="lg"><i class="dot hot"></i>套利信号</span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="lofTable">
+        <thead>
+          <tr>
+            <th data-key="code" class="sortable">代码</th>
+            <th data-key="name" class="sortable">名称</th>
+            <th data-key="price" class="sortable num">现价</th>
+            <th data-key="changePct" class="sortable num">涨跌%</th>
+            <th data-key="bid" class="sortable num">买一</th>
+            <th data-key="ask" class="sortable num">卖一</th>
+            <th data-key="dwjz" class="sortable num">单位净值</th>
+            <th data-key="gsz" class="sortable num">估值</th>
+            <th data-key="premiumNow" class="sortable num">溢价率</th>
+            <th data-key="bidPremium" class="sortable num">买一溢价</th>
+            <th data-key="askDiscount" class="sortable num">卖一折价</th>
+            <th data-key="indexNm" class="sortable">跟踪指数</th>
+            <th data-key="indexChangePct" class="sortable num">指数涨跌%</th>
+            <th class="num">操作</th>
+          </tr>
+        </thead>
+        <tbody id="lofBody"></tbody>
+      </table>
+    </div>
+    <p class="hint">LOF 基金可在场内（二级市场）与场外（净值）两个价格间套利：场内价格高于净值即“溢价”，可场外申购、场内卖出；折价则反向。指数涨跌% 在无非免费实时源时，以基金最新净值相对前一交易日净值的日变动近似（标记 ≈）。数据来源：腾讯财经、东方财富。</p>
+  </section>
+
   <!-- 股票行情 -->
-  <section id="stock" class="panel active">
+  <section id="stock" class="panel">
     <div class="toolbar">
       <div class="add-form">
         <input id="stockInput" type="text" placeholder="股票代码，如 600519 或 sh600519" />
@@ -58,11 +141,11 @@
         <tbody id="stockBody"></tbody>
       </table>
     </div>
-    <p class="hint">股票列表可自由编辑：输入代码即可添加（自动识别沪深市场），点击行末"移除"删除。列表保存在浏览器本地。成交额以"亿"为单位（保留 4 位小数）；其后依次为 PB、动态PE(ttm)、ROE（=PB÷动态PE×100）、分红率、股息率、定估收益率、总市值(亿)。其中 分红率 = 每股股利÷每股收益、股息率 = 每股股利÷现价（均基于最近一个自然年度已实施分红方案），定估收益率 = (1−分红率)×ROE + 股息率。数据来源：腾讯财经、东方财富分红送配。</p>
+    <p class="hint">股票列表保存在浏览器本地。成交额(亿)保留 4 位小数；其后依次为 PB、动态PE(ttm)、ROE（=PB÷动态PE×100）、分红率、股息率、定估收益率（=(1−分红率)×ROE+股息率）、总市值(亿)。数据来源：腾讯财经、东方财富分红送配。</p>
   </section>
 
   <footer class="foot">
-    数据来源：腾讯财经实时行情 · 东方财富分红送配 ｜ 仅供研究参考，不构成投资建议
+    数据来源：腾讯财经实时行情 · 东方财富净值/分红 ｜ 仅供研究参考，不构成投资建议
   </footer>
 
   <script src="app.js"></script>

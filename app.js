@@ -12,81 +12,78 @@ function fmtPct(n) {
   if (n === null || n === undefined || isNaN(n)) return '--';
   return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
 }
+function fmtDate(d) {
+  if (!d) return '';
+  return String(d).slice(5); // 2026-07-17 -> 07-17
+}
 function clsFor(n) {
   if (n === null || n === undefined || isNaN(n) || n === 0) return 'flat';
   return n > 0 ? 'up' : 'down';
 }
-
-// ---------- 股票列表（浏览器本地存储） ----------
-const LS_KEY = 'stockList.v1';
-// 首次访问的默认股票（可在页面里自由增删，之后以本地存储为准）
-const DEFAULT_STOCKS = [
-  'sh600519', 'sz000858', 'sh601318', 'sh000001', 'sz399001',
-  'sh600887', 'sz002966', 'sz000333', 'sz000651', 'sh601995',
-  'sz000568', 'sz300760', 'sz000999', 'sh600285', 'sh600926',
-  'sh600036', 'sz002557', 'sz002867', 'sz002507', 'sh600436'
-];
-
 function normalizeSymbol(input) {
   input = (input || '').trim().toLowerCase();
   if (!input) return null;
   if (/^(sh|sz|hk)\d/.test(input)) return input;
-  if (/^\d{6}$/.test(input)) {
-    // 5/6 开头为沪市，其余为深市
-    return (/^([56])/.test(input) ? 'sh' : 'sz') + input;
-  }
+  if (/^\d{6}$/.test(input)) return (/^([56])/.test(input) ? 'sh' : 'sz') + input;
   return null;
 }
 
-function loadStocks() {
+// ---------- localStorage 列表（每页独立） ----------
+const LS = { self: 'selfList.v1', lof: 'lofList.v1', stock: 'stockList.v1' };
+const DEFAULTS = {
+  self: ['sz161725', 'sz163406', 'sz161005', 'sz162605', 'sz163402'],
+  lof:  ['sz161725', 'sz161226', 'sz163406', 'sz161005', 'sz162605', 'sz163402', 'sz160119', 'sz160216', 'sz161810', 'sz161903', 'sz160222', 'sz160106'],
+  stock: ['sh600519', 'sz000858', 'sh601318', 'sh600036', 'sh600887', 'sz000333', 'sz000651', 'sz300750', 'sz000568', 'sz300760']
+};
+function loadList(key) {
   try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return arr;
-    }
-  } catch (e) { /* ignore */ }
-  saveStocks(DEFAULT_STOCKS.slice());
-  return DEFAULT_STOCKS.slice();
+    const raw = localStorage.getItem(LS[key]);
+    if (raw) { const a = JSON.parse(raw); if (Array.isArray(a)) return a; }
+  } catch (e) {}
+  const d = DEFAULTS[key].slice();
+  localStorage.setItem(LS[key], JSON.stringify(d));
+  return d;
 }
-function saveStocks(list) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(list)); } catch (e) { /* ignore */ }
-}
+function saveList(key, list) { try { localStorage.setItem(LS[key], JSON.stringify(list)); } catch (e) {} }
 
-let stockList = loadStocks();
+const lists = {
+  self: loadList('self'),
+  lof: loadList('lof'),
+  stock: loadList('stock')
+};
+const dataStore = { self: [], lof: [], stock: [] };
 
-// ---------- market status (Beijing time) ----------
-function marketStatus(now = new Date()) {
+// ---------- 交易时段判断（北京时间） ----------
+// 用户要求：周一至周五 9:00-16:00 自动刷新；其余时段仅手动刷新。
+function isTradingNow(now = new Date()) {
   const beijing = new Date(now.getTime() + (now.getTimezoneOffset() * 60000) + 8 * 3600000);
   const day = beijing.getDay();
-  const h = beijing.getHours(), m = beijing.getMinutes();
-  const t = h * 60 + m;
+  const t = beijing.getHours() * 60 + beijing.getMinutes();
   const isWeekday = day >= 1 && day <= 5;
-  const morning = t >= 9 * 60 + 15 && t <= 11 * 60 + 30;
-  const afternoon = t >= 13 * 60 && t <= 15 * 60;
-  if (isWeekday && (morning || afternoon)) return { open: true, text: '交易中' };
-  return { open: false, text: '休市' };
+  return isWeekday && t >= 9 * 60 && t <= 16 * 60;
 }
 
 // ---------- sorting ----------
-let sortState = { stock: { key: 'changePct', dir: 'desc' } };
-
-function attachSort(tableId, onSort) {
+const sortState = {
+  self:  { key: 'premiumNow', dir: 'desc' },
+  lof:   { key: 'premiumNow', dir: 'desc' },
+  stock: { key: 'changePct', dir: 'desc' }
+};
+function attachSort(tableId) {
   $$(`#${tableId} th.sortable`).forEach(th => {
     th.addEventListener('click', () => {
       const key = th.dataset.key;
-      const cur = sortState.stock;
+      const cur = sortState[tableId];
       if (cur.key === key) cur.dir = cur.dir === 'asc' ? 'desc' : 'asc';
       else { cur.key = key; cur.dir = 'asc'; }
       $$(`#${tableId} th`).forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
       th.classList.add(cur.dir === 'asc' ? 'sort-asc' : 'sort-desc');
-      onSort();
+      renderTab(tableId.replace('Table', ''));
     });
   });
 }
-
-function applySort(rows) {
-  const { key, dir } = sortState.stock;
+function applySort(rows, tableId) {
+  const { key, dir } = sortState[tableId];
   const mul = dir === 'asc' ? 1 : -1;
   return rows.slice().sort((a, b) => {
     let va = a[key], vb = b[key];
@@ -97,16 +94,78 @@ function applySort(rows) {
   });
 }
 
-// ---------- render stocks ----------
+// ---------- premium cell ----------
+function premCell(val, withSignal) {
+  if (val === null || val === undefined || isNaN(val)) return '<span class="prem-cell">--</span>';
+  const c = val > 0 ? 'prem-up' : (val < 0 ? 'prem-down' : '');
+  const sig = (withSignal && Math.abs(val) >= 1) ? ' signal' : '';
+  return `<span class="prem-cell ${c}${sig}">${fmtPct(val)}</span>`;
+}
+
+// ---------- render 自选 ----------
+function renderSelf(data) {
+  const body = $('#selfBody');
+  if (!data.length) { body.innerHTML = '<tr><td colspan="12" class="empty">自选为空，请在上方“加入自选”添加基金</td></tr>'; return; }
+  body.innerHTML = applySort(data, 'self').map(r => {
+    if (r.error) return `<tr><td class="code">${r.code}</td><td>${r.name}</td><td colspan="9" class="muted">行情获取失败</td><td class="num"><button class="btn danger sm" data-del="self" data-sym="${r.symbol}">移除</button></td></tr>`;
+    const cc = clsFor(r.changePct);
+    const navD = fmtDate(r.navDate);
+    return `<tr>
+      <td class="code">${r.code}</td>
+      <td class="name">${r.name}</td>
+      <td class="num ${cc}">${fmt(r.price, 3)}</td>
+      <td class="num ${cc}">${fmtPct(r.changePct)}</td>
+      <td class="num">${fmt(r.bid, 3)}</td>
+      <td class="num">${fmt(r.ask, 3)}</td>
+      <td class="num">${fmt(r.dwjz, 4)}${navD ? `<div class="sub">${navD}</div>` : ''}</td>
+      <td class="num">${fmt(r.gsz, 3)}</td>
+      <td class="num">${premCell(r.premiumNow, true)}</td>
+      <td class="num">${premCell(r.bidPremium, true)}</td>
+      <td class="num">${premCell(r.askDiscount, true)}</td>
+      <td class="num"><button class="btn danger sm" data-del="self" data-sym="${r.symbol}">移除</button></td>
+    </tr>`;
+  }).join('');
+  bindDel();
+}
+
+// ---------- render LOF 基金 ----------
+function renderLof(data) {
+  const body = $('#lofBody');
+  if (!data.length) { body.innerHTML = '<tr><td colspan="14" class="empty">暂无基金，请在上方添加</td></tr>'; return; }
+  body.innerHTML = applySort(data, 'lof').map(r => {
+    if (r.error) return `<tr><td class="code">${r.code}</td><td>${r.name}</td><td colspan="11" class="muted">行情获取失败</td><td class="num"><button class="btn danger sm" data-del="lof" data-sym="${r.symbol}">移除</button></td></tr>`;
+    const cc = clsFor(r.changePct);
+    const navD = fmtDate(r.navDate);
+    const idx = r.indexNm ? `<span class="idx-nm">${r.indexNm}</span>` : '<span class="muted">--</span>';
+    const idxChg = (r.indexChangePct !== null && !isNaN(r.indexChangePct))
+      ? `<span class="${clsFor(r.indexChangePct)}">${r.indexProxy ? '≈' : ''}${fmtPct(r.indexChangePct)}</span>`
+      : '<span class="muted">--</span>';
+    return `<tr>
+      <td class="code">${r.code}</td>
+      <td class="name">${r.name}</td>
+      <td class="num ${cc}">${fmt(r.price, 3)}</td>
+      <td class="num ${cc}">${fmtPct(r.changePct)}</td>
+      <td class="num">${fmt(r.bid, 3)}</td>
+      <td class="num">${fmt(r.ask, 3)}</td>
+      <td class="num">${fmt(r.dwjz, 4)}${navD ? `<div class="sub">${navD}</div>` : ''}</td>
+      <td class="num">${fmt(r.gsz, 3)}</td>
+      <td class="num">${premCell(r.premiumNow, true)}</td>
+      <td class="num">${premCell(r.bidPremium, true)}</td>
+      <td class="num">${premCell(r.askDiscount, true)}</td>
+      <td class="idx">${idx}</td>
+      <td class="num">${idxChg}</td>
+      <td class="num"><button class="btn danger sm" data-del="lof" data-sym="${r.symbol}">移除</button></td>
+    </tr>`;
+  }).join('');
+  bindDel();
+}
+
+// ---------- render 股票 ----------
 function renderStocks(data) {
   const body = $('#stockBody');
   if (!data.length) { body.innerHTML = '<tr><td colspan="14" class="empty">暂无股票，请在上方添加</td></tr>'; return; }
-  const sorted = applySort(data);
-  body.innerHTML = sorted.map(r => {
-    if (r.error) {
-      return `<tr><td class="code">${r.code}</td><td>${r.name}</td><td colspan="11" class="muted">行情获取失败</td>
-        <td class="num"><button class="btn danger sm" data-del-stock="${r.symbol}">移除</button></td></tr>`;
-    }
+  body.innerHTML = applySort(data, 'stock').map(r => {
+    if (r.error) return `<tr><td class="code">${r.code}</td><td>${r.name}</td><td colspan="11" class="muted">行情获取失败</td><td class="num"><button class="btn danger sm" data-del="stock" data-sym="${r.symbol}">移除</button></td></tr>`;
     const cc = clsFor(r.changePct);
     const pb = (r.pb !== null && !isNaN(r.pb)) ? fmt(r.pb, 2) : '--';
     const pe = (r.peTTM !== null && !isNaN(r.peTTM)) ? fmt(r.peTTM, 2) : '--';
@@ -130,69 +189,104 @@ function renderStocks(data) {
       <td class="num">${est}${estSub}</td>
       <td class="num">${cap}</td>
       <td class="num muted">${r.time || '--'}</td>
-      <td class="num"><button class="btn danger sm" data-del-stock="${r.symbol}">移除</button></td>
+      <td class="num"><button class="btn danger sm" data-del="stock" data-sym="${r.symbol}">移除</button></td>
     </tr>`;
   }).join('');
-  $$('[data-del-stock]').forEach(b => b.addEventListener('click', () => removeStock(b.dataset.delStock)));
+  bindDel();
+}
+
+function renderTab(tab) {
+  if (tab === 'self') renderSelf(dataStore.self);
+  else if (tab === 'lof') renderLof(dataStore.lof);
+  else renderStocks(dataStore.stock);
 }
 
 // ---------- data fetch ----------
-function stamp(msg) {
-  $('#lastUpdate').textContent = msg || ('更新于 ' + new Date().toLocaleTimeString('zh-CN'));
-}
+function stamp(msg) { $('#lastUpdate').textContent = msg || ('更新于 ' + new Date().toLocaleTimeString('zh-CN')); }
 
-async function refreshStocks() {
-  if (!stockList.length) { renderStocks([]); stamp(); return; }
+async function fetchTab(tab) {
   try {
-    const url = '/api/stocks?symbols=' + encodeURIComponent(stockList.join(','));
-    const res = await fetch(url);
+    const syms = lists[tab];
+    if (!syms.length) { dataStore[tab] = []; renderTab(tab); stamp(); return; }
+    const path = tab === 'stock' ? '/api/stocks' : '/api/funds';
+    const res = await fetch(path + '?symbols=' + encodeURIComponent(syms.join(',')));
     const j = await res.json();
-    renderStocks(j.data || []);
+    dataStore[tab] = j.data || [];
+    renderTab(tab);
     stamp();
   } catch (e) { stamp('更新失败: ' + e.message); }
 }
 
-// ---------- add / remove（本地存储） ----------
-function addStock() {
-  const raw = $('#stockInput').value;
+// ---------- 增删（本地存储） ----------
+function bindDel() {
+  $$('[data-del]').forEach(b => b.addEventListener('click', () => {
+    const tab = b.dataset.del, sym = b.dataset.sym;
+    lists[tab] = lists[tab].filter(s => s !== sym);
+    saveList(tab, lists[tab]);
+    fetchTab(tab);
+  }));
+}
+function addToList(tab, inputId) {
+  const raw = $('#' + inputId).value;
   const symbol = normalizeSymbol(raw);
-  if (!symbol) { alert('无效代码，请输入如 600519 或 sh600519'); return; }
-  if (stockList.includes(symbol)) { alert('该股票已在列表中'); return; }
-  stockList.push(symbol);
-  saveStocks(stockList);
-  $('#stockInput').value = '';
-  refreshStocks();
+  if (!symbol) { alert('无效代码，请输入如 161725 / sz161725（基金）或 600519 / sh600519（股票）'); return; }
+  if (lists[tab].includes(symbol)) { alert('该代码已在列表中'); return; }
+  lists[tab].push(symbol);
+  saveList(tab, lists[tab]);
+  $('#' + inputId).value = '';
+  fetchTab(tab);
 }
-function removeStock(symbol) {
-  stockList = stockList.filter(s => s !== symbol);
-  saveStocks(stockList);
-  refreshStocks();
+
+// ---------- 标签切换 ----------
+function currentTab() { return $('.tab.active').dataset.tab; }
+$$('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    $$('.tab').forEach(t => t.classList.remove('active'));
+    $$('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    $('#' + tab.dataset.tab).classList.add('active');
+    fetchTab(currentTab()); // 切换即加载该页（用户主动操作，非交易时段也允许）
+  });
+});
+
+// ---------- 自动刷新（交易时段 10 分钟，仅当前标签页，后台暂停） ----------
+const REFRESH_MS = 10 * 60 * 1000;
+let timer = null;
+function tick() {
+  if (!isTradingNow()) return;                 // 非交易时段不自动刷新
+  if (document.visibilityState !== 'visible') return; // 后台标签页暂停
+  if (!$('#autoToggle').checked) return;        // 用户关闭自动
+  fetchTab(currentTab());
 }
+function updateStatus() {
+  const trading = isTradingNow();
+  const auto = $('#autoToggle').checked;
+  const badge = $('#marketStatus');
+  badge.textContent = trading ? '交易中' : '休市';
+  badge.className = 'badge ' + (trading ? 'open' : 'closed');
+  let mode = trading ? (auto ? '交易中 · 每10分钟自动刷新' : '交易中 · 自动已暂停') : '休市 · 仅手动刷新';
+  $('#refreshMode').textContent = mode;
+}
+function startAuto() { stopAuto(); timer = setInterval(tick, REFRESH_MS); }
+function stopAuto() { if (timer) clearInterval(timer); }
 
 // ---------- wire up ----------
-$('#stockAdd').addEventListener('click', addStock);
-$('#stockInput').addEventListener('keydown', e => { if (e.key === 'Enter') addStock(); });
-$('#refreshBtn').addEventListener('click', refreshStocks);
-attachSort('stockTable', refreshStocks);
+$('#selfAdd').addEventListener('click', () => addToList('self', 'selfInput'));
+$('#selfInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('self', 'selfInput'); });
+$('#lofAdd').addEventListener('click', () => addToList('lof', 'lofInput'));
+$('#lofInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('lof', 'lofInput'));
+$('#stockAdd').addEventListener('click', () => addToList('stock', 'stockInput'));
+$('#stockInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('stock', 'stockInput'));
+$('#refreshBtn').addEventListener('click', () => fetchTab(currentTab()));
+$('#autoToggle').addEventListener('change', updateStatus);
+attachSort('selfTable'); attachSort('lofTable'); attachSort('stockTable');
 
-// market status
-(function updateStatus() {
-  const s = marketStatus();
-  const el = $('#marketStatus');
-  el.textContent = s.text;
-  el.className = 'badge ' + (s.open ? 'open' : 'closed');
-})();
+// 标签页重新可见且处于交易时段 → 立即刷新当前页
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { updateStatus(); if (isTradingNow() && $('#autoToggle').checked) fetchTab(currentTab()); } });
+// 每分钟刷新一次状态文案（交易开始/结束的边界提示）
+setInterval(updateStatus, 60000);
 
-// auto refresh（每 120 秒一次，控制 Netlify 免费层函数调用次数）
-let timer = null;
-function startAuto() { stopAuto(); timer = setInterval(refreshStocks, 120000); }
-function stopAuto() { if (timer) clearInterval(timer); }
-$('#autoToggle').addEventListener('change', e => e.target.checked ? startAuto() : stopAuto());
-
-// init sort header markers
-(function initSortMarks() {
-  $$('#stockTable th').forEach(th => { if (th.dataset.key === sortState.stock.key) th.classList.add('sort-' + sortState.stock.dir); });
-})();
-
-refreshStocks();
+// ---------- init ----------
+updateStatus();
+fetchTab(currentTab()); // 首次加载即拉取当前页
 startAuto();
