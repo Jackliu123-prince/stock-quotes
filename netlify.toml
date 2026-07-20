@@ -13,14 +13,3 @@
   from = "/api/funds"
   to = "/.netlify/functions/funds"
   status = 200
-
-# 静态资源浏览器缓存（提速重复访问；API 不缓存，保证行情实时）
-[[headers]]
-  for = "/style.css"
-  [headers.values]
-    Cache-Control = "public, max-age=86400"
-
-[[headers]]
-  for = "/app.js"
-  [headers.values]
-    Cache-Control = "public, max-age=86400"

@@ -274,9 +274,9 @@ function stopAuto() { if (timer) clearInterval(timer); }
 $('#selfAdd').addEventListener('click', () => addToList('self', 'selfInput'));
 $('#selfInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('self', 'selfInput'); });
 $('#lofAdd').addEventListener('click', () => addToList('lof', 'lofInput'));
-$('#lofInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('lof', 'lofInput'));
+$('#lofInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('lof', 'lofInput'); });
 $('#stockAdd').addEventListener('click', () => addToList('stock', 'stockInput'));
-$('#stockInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('stock', 'stockInput'));
+$('#stockInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('stock', 'stockInput'); });
 $('#refreshBtn').addEventListener('click', () => fetchTab(currentTab()));
 $('#autoToggle').addEventListener('change', updateStatus);
 attachSort('selfTable'); attachSort('lofTable'); attachSort('stockTable');
