@@ -13,7 +13,7 @@ import iconv from 'iconv-lite';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
 // 上游硬超时（毫秒）。Netlify 免费档函数超时为 10s，这里给每路请求留足余量。
-const UPSTREAM_TIMEOUT = 4000;
+const UPSTREAM_TIMEOUT = 3500;
 
 // 带超时的 fetch（挂起即 abort，转为 rejected，由调用方 .catch 降级）
 function fetchWithTimeout(url, options = {}, ms = UPSTREAM_TIMEOUT) {
@@ -22,15 +22,92 @@ function fetchWithTimeout(url, options = {}, ms = UPSTREAM_TIMEOUT) {
   return fetch(url, { ...options, signal: ctrl.signal }).finally(() => clearTimeout(timer));
 }
 
-// 已知 LOF 基金的跟踪指数（仅用于展示；指数涨跌幅统一用“净值日变动”近似，避免额外外部依赖）
-const FUND_INDEX = {
-  '161725': '中证白酒',
-  '160119': '中证500',
-  '160222': '国证食品',
-  '161226': '白银',
-  '160216': '大宗商品',
-  '160106': '深证100',
-  '163110': '中证500',
+// 已知 LOF 基金 → 跟踪指数（腾讯指数代码）。用于拉取“真实指数涨跌幅”。
+// 仅指数型 LOF 有单一跟踪指数；主动管理型无对应指数，相关列显示 "--"。
+// 新增指数型 LOF 时，在此追加 基金代码: 指数腾讯代码 即可（如 沪深300 sh000300 / 创业板指 sz399006）。
+const FUND_INDEX_CODE = {
+  '501036': 'sh000905',
+  '162711': 'sh000905',
+  '160807': 'sh000300',
+  '163111': 'sz399005',
+  '162307': 'sh000903',
+  '501019': 'sz399368',
+  '160626': 'sh000993',
+  '161812': 'sz399330',
+  '160616': 'sh000905',
+  '161017': 'sh000905',
+  '161033': 'sz399432',
+  '501043': 'sh000300',
+  '160119': 'sh000905',
+  '160223': 'sz399006',
+  '163118': 'sh000808',
+  '161039': 'sh000852',
+  '160225': 'sz399417',
+  '501045': 'sh000300',
+  '160630': 'sz399973',
+  '163407': 'sh000300',
+  '165511': 'sh000905',
+  '502048': 'sh000016',
+  '161024': 'sz399967',
+  '163109': 'sz399001',
+  '165515': 'sh000300',
+  '160706': 'sh000300',
+  '161123': 'sz399992',
+  '502023': 'sz399440',
+  '161028': 'sz399976',
+  '161227': 'sz399330',
+  '160638': 'sz399991',
+  '501037': 'sh000905',
+  '161026': 'sz399974',
+  '501016': 'sz399707',
+  '165525': 'sz399995',
+  '160637': 'sz399006',
+  '165522': 'sh000998',
+  '502003': 'sz399967',
+  '163115': 'sz399967',
+  '161816': 'sh000971',
+  '161118': 'sz399005',
+  '160633': 'sz399975',
+  '502056': 'sz399989',
+  '160629': 'sz399971',
+  '161715': 'sz399979',
+  '168203': 'sz399440',
+  '161025': 'sz399970',
+  '502000': 'sh000905',
+  '161726': 'sz399441',
+  '165309': 'sh000300',
+  '161720': 'sz399975',
+  '162216': 'sh000905',
+  '164508': 'sh000903',
+  '163113': 'sz399707',
+  '160221': 'sz399395',
+  '160615': 'sh000300',
+  '162412': 'sz399989',
+  '502006': 'sz399974',
+  '161122': 'sz399993',
+  '502010': 'sz399975',
+  '161027': 'sz399975',
+  '160631': 'sz399986',
+  '162509': 'sh000903',
+  '160628': 'sz399965',
+  '501047': 'sz399975',
+  '161724': 'sz399998',
+  '502053': 'sz399975',
+  '501048': 'sz399975',
+  '161121': 'sz399986',
+  '161725': 'sz399997',
+  '501059': 'sh000824',
+  '160632': 'sz399987',
+  '161032': 'sz399998',
+  '160716': 'sh000925',
+  '160218': 'sz399393',
+  '168204': 'sz399998',
+  '161029': 'sz399986',
+  '502013': 'sz399991',
+  '160222': 'sz399396',
+  '163116': 'sz399811',
+  '160806': 'sh000906',
+  '161811': 'sh000300',
 };
 
 // ============ 缓存（减少上游调用与延迟） ============
@@ -118,7 +195,7 @@ async function fetchFundNav(code) {
 }
 
 // 并发受限批量抓取净值（降低被东财限流概率）
-async function fetchAllEstimates(funds, limit = 8) {
+async function fetchAllEstimates(funds, limit = 10) {
   const map = new Map();
   let i = 0;
   async function worker() {
@@ -137,6 +214,10 @@ async function getFundData(symbols) {
   const quotes = await fetchTencent(symbols);
   const funds = symbols.map(s => ({ symbol: s, code: s.replace(/^(sh|sz|hk)/, '') }));
   const estMap = await fetchAllEstimates(funds);
+
+  // 跟踪指数真实行情：收集本批基金需要的指数代码，一次性向腾讯拉取（同域、合并请求）
+  const needIdx = [...new Set(symbols.map(s => FUND_INDEX_CODE[s.replace(/^(sh|sz|hk)/, '')]).filter(Boolean))];
+  const idxQuotes = needIdx.length ? await fetchTencent(needIdx) : {};
 
   return symbols.map((symbol) => {
     const code = symbol.replace(/^(sh|sz|hk)/, '');
@@ -171,13 +252,22 @@ async function getFundData(symbols) {
     const bidPremium = liveVal ? (bid - liveVal) / liveVal * 100 : null;
     const askDiscount = liveVal ? (ask - liveVal) / liveVal * 100 : null;
 
-    // 跟踪指数涨跌幅：无免费实时指数源 → 用最新净值相对前一交易日净值的日变动近似
-    let indexChangePct = null, indexProxy = false;
-    if (dwjz && prevDwjz && prevDwjz > 0) {
-      indexChangePct = (dwjz / prevDwjz - 1) * 100;
-      indexProxy = true;
+    // 跟踪指数涨跌幅：真实指数行情（腾讯）。无映射（主动管理型）则为 null → 页面显示 "--"
+    let indexChangePct = null, indexNm = null, indexProxy = false;
+    const ic = FUND_INDEX_CODE[code];
+    if (ic) {
+      const iq = idxQuotes[ic];
+      if (iq && iq[1]) {
+        indexNm = iq[1];
+        const ip = parseFloat(iq[3]);
+        const ipc = parseFloat(iq[4]) || 0;
+        if (!isNaN(ip) && ipc > 0) {
+          indexChangePct = (iq[32] !== undefined && !isNaN(parseFloat(iq[32])))
+            ? parseFloat(iq[32])
+            : (ip - ipc) / ipc * 100;
+        }
+      }
     }
-    const indexNm = FUND_INDEX[code] || null;
 
     return {
       code, symbol, name,

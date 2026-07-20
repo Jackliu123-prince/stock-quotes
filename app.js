@@ -32,7 +32,129 @@ function normalizeSymbol(input) {
 const LS = { self: 'selfList.v1', lof: 'lofList.v1', stock: 'stockList.v1' };
 const DEFAULTS = {
   self: ['sz161725', 'sz163406', 'sz161005', 'sz162605', 'sz163402'],
-  lof:  ['sz161725', 'sz161226', 'sz163406', 'sz161005', 'sz162605', 'sz163402', 'sz160119', 'sz160216', 'sz161810', 'sz161903', 'sz160222', 'sz160106'],
+  lof:  [
+    'sz161226',
+    'sh501036',
+    'sz162711',
+    'sh501030',
+    'sz160807',
+    'sz163111',
+    'sz162307',
+    'sh501019',
+    'sz160626',
+    'sz161812',
+    'sz160616',
+    'sz161017',
+    'sz161033',
+    'sh501043',
+    'sh501010',
+    'sz160119',
+    'sz167301',
+    'sz160223',
+    'sz163118',
+    'sz161039',
+    'sz160225',
+    'sh501045',
+    'sz160630',
+    'sz163407',
+    'sh501031',
+    'sz165511',
+    'sh502048',
+    'sh501029',
+    'sz161037',
+    'sz161024',
+    'sz163109',
+    'sz165515',
+    'sz160706',
+    'sz161123',
+    'sh502023',
+    'sz161028',
+    'sz161227',
+    'sz160638',
+    'sh501037',
+    'sz161026',
+    'sh501012',
+    'sh501016',
+    'sh501011',
+    'sz161631',
+    'sh501058',
+    'sz165525',
+    'sz160637',
+    'sz165522',
+    'sz161036',
+    'sh502003',
+    'sz163115',
+    'sh501009',
+    'sh501007',
+    'sz161816',
+    'sh501057',
+    'sz161035',
+    'sz161118',
+    'sz165521',
+    'sz160633',
+    'sh502056',
+    'sz168701',
+    'sz160629',
+    'sz165519',
+    'sz161715',
+    'sz160643',
+    'sz168203',
+    'sz161025',
+    'sh502000',
+    'sz161726',
+    'sz165309',
+    'sz161031',
+    'sz161720',
+    'sz160625',
+    'sz160620',
+    'sz162216',
+    'sz164508',
+    'sh501008',
+    'sz163113',
+    'sz160221',
+    'sz160615',
+    'sh501005',
+    'sz162412',
+    'sh502006',
+    'sz161122',
+    'sz161030',
+    'sh501089',
+    'sz165520',
+    'sz160635',
+    'sz160219',
+    'sh502010',
+    'sz163821',
+    'sz161027',
+    'sz160631',
+    'sz161217',
+    'sh501090',
+    'sz162509',
+    'sz160639',
+    'sz160628',
+    'sh501047',
+    'sz161724',
+    'sh502053',
+    'sh501050',
+    'sh501048',
+    'sz161121',
+    'sz161725',
+    'sh501059',
+    'sh501311',
+    'sz160632',
+    'sz161032',
+    'sz160716',
+    'sz160218',
+    'sz163114',
+    'sz168204',
+    'sz161029',
+    'sz160135',
+    'sh502013',
+    'sz160222',
+    'sz161607',
+    'sz163116',
+    'sz160806',
+    'sz161811'
+  ],
   stock: ['sh600519', 'sz000858', 'sh601318', 'sh600036', 'sh600887', 'sz000333', 'sz000651', 'sz300750', 'sz000568', 'sz300760']
 };
 function loadList(key) {
@@ -138,7 +260,7 @@ function renderLof(data) {
     const navD = fmtDate(r.navDate);
     const idx = r.indexNm ? `<span class="idx-nm">${r.indexNm}</span>` : '<span class="muted">--</span>';
     const idxChg = (r.indexChangePct !== null && !isNaN(r.indexChangePct))
-      ? `<span class="${clsFor(r.indexChangePct)}">${r.indexProxy ? '≈' : ''}${fmtPct(r.indexChangePct)}</span>`
+      ? `<span class="${clsFor(r.indexChangePct)}">${fmtPct(r.indexChangePct)}</span>`
       : '<span class="muted">--</span>';
     return `<tr>
       <td class="code">${r.code}</td>
@@ -209,9 +331,20 @@ async function fetchTab(tab) {
     const syms = lists[tab];
     if (!syms.length) { dataStore[tab] = []; renderTab(tab); stamp(); return; }
     const path = tab === 'stock' ? '/api/stocks' : '/api/funds';
-    const res = await fetch(path + '?symbols=' + encodeURIComponent(syms.join(',')));
-    const j = await res.json();
-    dataStore[tab] = j.data || [];
+    // 分块并发：单函数调用只处理一小批，避免基金过多时东财净值调用超过 Netlify 10s 上限
+    const CHUNK = 10;
+    const chunks = [];
+    for (let i = 0; i < syms.length; i += CHUNK) chunks.push(syms.slice(i, i + CHUNK));
+    const results = await Promise.all(chunks.map(async c => {
+      const res = await fetch(path + '?symbols=' + encodeURIComponent(c.join(',')));
+      const j = await res.json();
+      return j.data || [];
+    }));
+    const merged = [], seen = new Set();
+    for (const arr of results) for (const r of arr) {
+      if (r && !seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
+    }
+    dataStore[tab] = merged;
     renderTab(tab);
     stamp();
   } catch (e) { stamp('更新失败: ' + e.message); }
@@ -234,6 +367,13 @@ function addToList(tab, inputId) {
   lists[tab].push(symbol);
   saveList(tab, lists[tab]);
   $('#' + inputId).value = '';
+  fetchTab(tab);
+}
+// 恢复默认列表：用内置 DEFAULTS 覆盖本页 localStorage（用于把 netlify 页对齐到统一清单）
+function resetList(tab) {
+  if (!confirm('确定用内置默认列表覆盖本页当前的列表吗？')) return;
+  lists[tab] = DEFAULTS[tab].slice();
+  saveList(tab, lists[tab]);
   fetchTab(tab);
 }
 
@@ -277,6 +417,9 @@ $('#lofAdd').addEventListener('click', () => addToList('lof', 'lofInput'));
 $('#lofInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('lof', 'lofInput'); });
 $('#stockAdd').addEventListener('click', () => addToList('stock', 'stockInput'));
 $('#stockInput').addEventListener('keydown', e => { if (e.key === 'Enter') addToList('stock', 'stockInput'); });
+$('#selfReset').addEventListener('click', () => resetList('self'));
+$('#lofReset').addEventListener('click', () => resetList('lof'));
+$('#stockReset').addEventListener('click', () => resetList('stock'));
 $('#refreshBtn').addEventListener('click', () => fetchTab(currentTab()));
 $('#autoToggle').addEventListener('change', updateStatus);
 attachSort('selfTable'); attachSort('lofTable'); attachSort('stockTable');
