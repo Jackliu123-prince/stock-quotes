@@ -6,15 +6,17 @@
 //   2) 指数涨跌：标准 A 股指数（sh/sz 前缀，如沪深300/中证500/国证系列）优先【腾讯】；
 //      中证主题(930xxx)及特殊指数（2.H30540、124.HSSCNE、fut_ag 等）腾讯无行情，走【东财 push2delay】
 //      镜像域（字段与 push2 一致、沙箱/生产均可返回，secid 由 searchapi 反查得到）。
-//   3) 单位净值：东方财富 api.fund.eastmoney.com/f10/lsjz（权威 dwjz，含前一交易日）。
+//   3) 单位净值：读 nav-data.js 快照（东方财富 lsjz 预先抓取，每日仅变一次，交易时段恒定）；
+//      并以非阻塞后台任务每隔数小时静默刷新内存快照。新增基金走“尽力而为”实时兜底。
 //
-// 估值算法（v2）：估值(estNav) = 单位净值(dwjz) × (1 + 指数涨跌幅(%) / 100 × 仓位系数)
+// 估值算法（v2）：估值(estNav) = 单位净值(dwjz) × (1 + 指数涨跌幅(%) / 100 × 仓位系数）
 //   仓位系数 POSITION = 0.92（基金预估仓位）。有完整指数映射且单位净值有效时计算，否则回落 "--"。
 //
 // 关键：所有上游请求带硬超时（AbortController）。单函数 Netlify 免费档 10s 上限，故本接口
 // 仅处理单批（前端已按每批 10 只分块并发请求），指数与净值各走独立并发，保证超时前返回。
 
 import iconv from 'iconv-lite';
+import { NAV_SNAPSHOT } from './nav-data.js';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
@@ -166,7 +168,7 @@ const INDEX_NAME_OVERRIDE = {
 
 // ============ 缓存 ============
 const cache = new Map();
-const TTL = { tencent: 3000, fundNav: 30000, index: 8000 };
+const TTL = { tencent: 3000, index: 8000 };
 function getCached(key, ttl) {
   const c = cache.get(key);
   if (c && Date.now() - c.ts < ttl) return c.data;
@@ -236,7 +238,12 @@ async function fetchSina(symbols) {
   return out;
 }
 
-// ============ 东方财富 单位净值 ============
+// ============ 单位净值（快照 + 后台静默刷新） ============
+// 单位净值每日仅收盘后更新一次，交易时段内恒定。若每次刷新都向东财 lsjz 爆发请求，
+// 极易触发限流，导致随机若干基金取不到净值（且被 30s 负缓存放大）。故改为：
+//   - 启动时读 nav-data.js 快照（覆盖全部默认基金，永远有净值，瞬间返回）；
+//   - 非阻塞后台任务每隔数小时静默把东财最新净值合并进内存快照（兼顾新鲜度）；
+//   - 快照未覆盖的新增基金走“尽力而为”的实时获取兜底（失败回落 --，不污染快照）。
 async function fetchFundNavLsjz(code) {
   const url = `https://api.fund.eastmoney.com/f10/lsjz?fundCode=${code}&pageIndex=1&pageSize=2`;
   const res = await fetchWithTimeout(url, { headers: { 'User-Agent': UA, Referer: 'https://fundf10.eastmoney.com/' } });
@@ -246,31 +253,40 @@ async function fetchFundNavLsjz(code) {
   const row = list[0];
   const prev = list[1];
   return {
-    dwjz: row.DWJZ, jzrq: row.FSRQ,
+    dwjz: row.DWJZ, jzrq: row.FSRQ || null,
     prevDwjz: prev && prev.DWJZ ? prev.DWJZ : null,
     prevJzrq: prev && prev.FSRQ ? prev.FSRQ : null
   };
 }
-async function fetchFundNav(code) {
-  const key = 'nav:' + code;
-  const cached = getCached(key, TTL.fundNav);
-  if (cached) return cached.__neg ? null : cached;
-  const nav = await fetchFundNavLsjz(code).catch(() => null);
-  if (!nav) { setCached(key, { __neg: true }); return null; }
-  setCached(key, nav);
-  return nav;
+function fetchFundNavLive(code) {
+  return fetchFundNavLsjz(code).catch(() => null);
 }
-async function fetchAllNav(funds, limit = 10) {
-  const map = new Map();
-  let i = 0;
-  async function worker() {
-    while (i < funds.length) {
-      const f = funds[i++];
-      map.set(f.code, await fetchFundNav(f.code).catch(() => null));
+let navSnapshot = Object.assign({}, NAV_SNAPSHOT);
+let lastNavRefresh = 0;
+function refreshNavInBackground() {
+  const now = Date.now();
+  if (now - lastNavRefresh < 3 * 3600 * 1000) return;
+  lastNavRefresh = now;
+  (async () => {
+    const codes = Object.keys(navSnapshot);
+    let i = 0;
+    async function worker() {
+      while (i < codes.length) {
+        const code = codes[i++];
+        const r = await fetchFundNavLive(code).catch(() => null);
+        if (r) navSnapshot[code] = r;
+        await new Promise(res => setTimeout(res, 80));
+      }
     }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, funds.length) }, worker));
-  return map;
+    try { await Promise.all(Array.from({ length: Math.min(4, codes.length) }, worker)); }
+    catch (e) {}
+  })();
+}
+async function getNav(code) {
+  if (navSnapshot[code]) return navSnapshot[code];
+  const r = await fetchFundNavLive(code).catch(() => null); // 新增基金：尽力实时兜底
+  if (r) navSnapshot[code] = r;
+  return r;
 }
 
 // ============ 指数涨跌幅（东方财富 push2delay 镜像，字段与 push2 一致） ============
@@ -353,28 +369,24 @@ function isHardIndex(secid) {
   return false;
 }
 
-// 并发受限批量获取指数涨跌幅。
+// 并发批量获取指数涨跌幅。
 // 易获取指数（标准 A 股）→ 腾讯优先，失败回退东财；难获取指数（中证9开头/特殊）→ 东财 push2delay。
-async function fetchAllIndexChanges(secids, limit = 6) {
+// 难获取指数改为【并行】抓取（一次调用内 ~15 个并发，比逐只串行 120ms 快得多；且本函数每次刷新仅调用一次，
+// 不再像旧版把列表拆 16 个并发请求各自串行打东财而触发限流）。
+async function fetchAllIndexChanges(secids) {
   const uniq = [...new Set(secids.filter(Boolean))];
   const result = new Map();
 
   const hard = uniq.filter(isHardIndex);
   const easy = uniq.filter(s => !isHardIndex(s));
 
-  // 第一轮：难获取指数走东财 push2delay（两请求间加 120ms 延迟，降低限速概率）
-  let hi = 0;
-  async function emWorker() {
-    while (hi < hard.length) {
-      const s = hard[hi++];
-      const r = await fetchEastmoneyIndex(s).catch(() => null);
-      if (r) result.set(s, r);
-      await new Promise(res => setTimeout(res, 120));
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, hard.length) }, emWorker));
+  // 难获取指数：东财 push2delay（并行，单次调用内完成）
+  await Promise.all(hard.map(async s => {
+    const r = await fetchEastmoneyIndex(s).catch(() => null);
+    if (r) result.set(s, r);
+  }));
 
-  // 第二轮：易获取指数优先腾讯（字段顺、易获取、不易被拦截）
+  // 易获取指数：腾讯优先（一次调用拿全部）
   const tCodes = easy.map(secidToTencent).filter(Boolean);
   if (tCodes.length) {
     const tIdx = await fetchTencentIndex(tCodes).catch(() => ({}));
@@ -383,18 +395,12 @@ async function fetchAllIndexChanges(secids, limit = 6) {
       if (tc && tIdx[tc]) result.set(s, tIdx[tc]);
     }
   }
-  // 第三轮：腾讯未命中的易获取指数，回退东财
-  const emFallback = easy.filter(s => !result.has(s));
-  let fi = 0;
-  async function emFbWorker() {
-    while (fi < emFallback.length) {
-      const s = emFallback[fi++];
-      const r = await fetchEastmoneyIndex(s).catch(() => null);
-      if (r) result.set(s, r);
-      await new Promise(res => setTimeout(res, 120));
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, emFallback.length) }, emFbWorker));
+  // 腾讯未命中的易获取指数，回退东财（并行，少量）
+  const emFb = easy.filter(s => !result.has(s));
+  await Promise.all(emFb.map(async s => {
+    const r = await fetchEastmoneyIndex(s).catch(() => null);
+    if (r) result.set(s, r);
+  }));
 
   return result;
 }
@@ -423,7 +429,8 @@ async function getFundData(symbols) {
     }
   }
   const funds = symbols.map(s => ({ symbol: s, code: s.replace(/^(sh|sz|hk)/, '') }));
-  const estMap = await fetchAllNav(funds);
+  const navMap = new Map();
+  await Promise.all(funds.map(async f => { navMap.set(f.code, await getNav(f.code)); }));
 
   // 收集本批需要的指数 secid，批量拉涨跌幅（易获取走腾讯，难获取走东财）
   const needSecids = [...new Set(funds.map(f => FUND_INDEX_SECID[f.code]).filter(Boolean))];
@@ -445,7 +452,7 @@ async function getFundData(symbols) {
     const date = q.date || '';
     const time = q.time || '';
 
-    const est = estMap.get(code);
+    const est = navMap.get(code);
     let dwjz = null, navDate = null, prevDwjz = null;
     if (est) {
       dwjz = parseFloat(est.dwjz);
@@ -501,6 +508,7 @@ export async function handler(event, context) {
     const params = event.queryStringParameters || {};
     const raw = (params.symbols || '').split(',');
     const symbols = [...new Set(raw.map(normalizeSymbol).filter(Boolean))];
+    refreshNavInBackground(); // 非阻塞：每隔数小时静默刷新内存净值快照
     const data = await getFundData(symbols);
     return {
       statusCode: 200,

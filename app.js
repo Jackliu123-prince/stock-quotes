@@ -329,20 +329,25 @@ async function fetchTab(tab) {
     const syms = lists[tab];
     if (!syms.length) { dataStore[tab] = []; renderTab(tab); stamp(); return; }
     const path = tab === 'stock' ? '/api/stocks' : '/api/funds';
-    // 分块并发：单函数调用只处理一小批，避免基金过多时东财净值调用超过 Netlify 10s 上限
-    const CHUNK = 10;
+    // 净值已改为快照（瞬间返回）、指数已批量，单批即可容纳全部基金；
+    // 仅在列表超长时分块兜底。分块采用【渐进渲染】：每块到达即合并上屏，体感更快。
+    const CHUNK = 200;
     const chunks = [];
     for (let i = 0; i < syms.length; i += CHUNK) chunks.push(syms.slice(i, i + CHUNK));
-    const results = await Promise.all(chunks.map(async c => {
-      const res = await fetch(path + '?symbols=' + encodeURIComponent(c.join(',')));
-      const j = await res.json();
-      return j.data || [];
-    }));
     const merged = [], seen = new Set();
-    for (const arr of results) for (const r of arr) {
-      if (r && !seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
-    }
-    dataStore[tab] = merged;
+    let first = true;
+    await Promise.all(chunks.map(async c => {
+      try {
+        const res = await fetch(path + '?symbols=' + encodeURIComponent(c.join(',')));
+        const j = await res.json();
+        const arr = (j && j.data) || [];
+        for (const r of arr) if (r && !seen.has(r.symbol)) { seen.add(r.symbol); merged.push(r); }
+        dataStore[tab] = merged.slice();
+        renderTab(tab);                       // 每块到达即上屏
+        if (first) { first = false; stamp('加载中…'); }
+      } catch (e) { /* 单块失败不影响其它块 */ }
+    }));
+    dataStore[tab] = merged.slice();
     renderTab(tab);
     stamp();
   } catch (e) { stamp('更新失败: ' + e.message); }
