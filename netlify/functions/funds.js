@@ -210,8 +210,9 @@ async function fetchTencent(symbols) {
 
 // ============ 新浪基金/股票行情（GBK） —— 基金价格主源 ============
 // 返回标准化对象（同 fetchTencent 形状）。字段（, 分隔，基金含五档盘口）：
-//   p[0]=名称, p[2]=昨收, p[3]=现价, p[6]=买一(竞买价), p[13]=卖一(五档盘口卖一价)
-//   注意：新浪 p[7]（竞卖价）对基金不可靠（恒等于现价），卖一须取五档盘口 p[13]。
+//   p[0]=名称, p[2]=昨收, p[3]=现价, p[6]=买一(竞买价), p[7]=卖一(竞卖价)
+//   说明：新浪基金 p[7]（竞卖价）通常等于现价、并非严格五档卖一价；精确卖一优先由腾讯 p[11] 提供，
+//        新浪 p[7] 仅作兜底（至少满足 卖一≈现价 ≥ 买一，不会低于买一）。故不再使用 p[13]（实为买三价）。
 async function fetchSina(symbols) {
   if (!symbols.length) return {};
   const key = 'sina:' + symbols.join(',');
@@ -229,7 +230,7 @@ async function fetchSina(symbols) {
     if (p.length < 14) continue;
     const price = parseFloat(p[3]);
     const bid = parseFloat(p[6]);     // 买一（竞买价）
-    const ask = parseFloat(p[13]);    // 卖一（五档盘口卖一价）
+    const ask = parseFloat(p[7]);     // 卖一（竞卖价/现价近似；精确卖一优先走腾讯 p[11]）
     const prevClose = parseFloat(p[2]) || 0;
     if (isNaN(price) || isNaN(bid) || isNaN(ask)) continue;
     const changePct = prevClose ? (price - prevClose) / prevClose * 100 : 0;
@@ -410,6 +411,19 @@ async function fetchAllIndexChanges(secids) {
   return result;
 }
 
+// ============ 盘口报价择优 ============
+// 选盘口报价：优先腾讯（字段规范，p[9]=买一、p[11]=卖一 为真实五档价）；
+// 硬性要求 卖一(ask) ≥ 买一(bid)（盘口基本约束，否则视为字段错位/收盘失真而失效）；
+// 两源均不满足时退而求其次（取有值的一方，避免整行缺失），仍都缺则返回 null（前端回落“行情获取失败”）。
+function pickQuote(sq, tq) {
+  const ok = q => q && q.bid > 0 && q.ask > 0 && q.ask >= q.bid - 1e-9;
+  if (ok(tq)) return tq;
+  if (ok(sq)) return sq;
+  if (sq && sq.bid > 0 && sq.ask > 0) return sq;
+  if (tq && tq.bid > 0 && tq.ask > 0) return tq;
+  return null;
+}
+
 // ============ 业务：基金数据 ============
 // 基金预估仓位系数：指数涨跌按此比例折算到基金净值（0.92 = 92% 预估仓位）
 const POSITION = 0.92;
@@ -420,8 +434,7 @@ async function getFundData(symbols) {
   const [sina, tencent] = await Promise.all([fetchSina(symbols), fetchTencent(symbols)]);
   const quotes = {};
   for (const s of symbols) {
-    const sq = sina[s];
-    quotes[s] = (sq && sq.bid > 0 && sq.ask > 0) ? sq : (tencent[s] || null);
+    quotes[s] = pickQuote(sina[s], tencent[s]);
   }
   // 兜底重试：个别标的在批量响应中被偶发截断/限速时，短暂停顿后【逐只】单独向两侧各取一次（规避大批量响应截断）
   const missing = symbols.filter(s => !quotes[s]);
@@ -429,7 +442,7 @@ async function getFundData(symbols) {
     await new Promise(r => setTimeout(r, 200));
     await Promise.all(missing.map(async s => {
       const [sq, tq] = await Promise.all([fetchSina([s]), fetchTencent([s])]);
-      const q = (sq[s] && sq[s].bid > 0 && sq[s].ask > 0) ? sq[s] : (tq[s] || null);
+      const q = pickQuote(sq[s], tq[s]);
       if (q) quotes[s] = q;
     }));
   }
