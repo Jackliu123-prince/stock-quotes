@@ -6,6 +6,7 @@
 //   2) 指数涨跌：标准 A 股指数（sh/sz 前缀，如沪深300/中证500/国证系列）优先【腾讯】；
 //      中证主题(930xxx)及特殊指数（2.H30540、124.HSSCNE、fut_ag 等）腾讯无行情，走【东财 push2delay】
 //      镜像域（字段与 push2 一致、沙箱/生产均可返回，secid 由 searchapi 反查得到）。
+//      指数涨跌每次请求实时拉取并带 8s 短缓存（≤8s 新鲜、低频不触发东财 WAF）。
 //   3) 单位净值：读 nav-data.js 快照（东方财富 lsjz 预先抓取，每日仅变一次，交易时段恒定）；
 //      并以非阻塞后台任务每隔数小时静默刷新内存快照。新增基金走“尽力而为”实时兜底。
 //
@@ -316,7 +317,7 @@ async function fetchEastmoneyIndex(secid) {
   const res = await fetchWithTimeout(url, { headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } });
   const j = await res.json();
   const d = j && j.data;
-  if (!d || d.f170 === undefined) { setCached(key, null); return null; }
+  if (!d || d.f170 === undefined) return null;   // 失败不缓存，下次请求自动重试并沿用 8s 内上次成功值
   const out = { name: INDEX_NAME_OVERRIDE[secid] || d.f58 || null, changePct: parseFloat(d.f170) / 100 };
   setCached(key, out);
   return out;
@@ -369,37 +370,44 @@ function isHardIndex(secid) {
   return false;
 }
 
-// 指数涨跌% 走“内存快照 + 后台静默刷新”：与净值同理，避免每次刷新都向东财 push2delay 爆发请求被限流。
-//   - indexSnapshot(secid -> {name,changePct}) 常驻内存；刷新时直接读（瞬间），不再现网打东财；
-//   - 非阻塞后台任务每 ~20s 把全部指数（易取走腾讯、难取走东财）重新拉入快照，保证盘中基本新鲜；
-//   - 冷启动/个别缺失时按需在 getFundData 内实时兜底一次（成功后回填快照）。
-const indexSnapshot = new Map();
-let lastIndexRefresh = 0;
-function refreshIndexInBackground() {
-  const now = Date.now();
-  if (now - lastIndexRefresh < 60 * 1000) return;
-  lastIndexRefresh = now;
-  (async () => {
-    const all = [...new Set(Object.values(FUND_INDEX_SECID).filter(Boolean))];
-    const hard = all.filter(isHardIndex);
-    const easy = all.filter(s => !isHardIndex(s));
-    // 易获取指数：腾讯（一次调用拿全部）
-    const tCodes = easy.map(secidToTencent).filter(Boolean);
-    if (tCodes.length) {
-      const tIdx = await fetchTencentIndex(tCodes).catch(() => ({}));
-      for (const s of easy) { const tc = secidToTencent(s); if (tc && tIdx[tc]) indexSnapshot.set(s, tIdx[tc]); }
+// 指数涨跌% 走“每次请求实时拉取 + 8s 短缓存”：
+//   - 每次刷新都现网拉取（易取走腾讯、难取走东财 push2delay），保证数据永远 ≤8s 新鲜、不会卡成陈旧值；
+//   - 两个 fetcher 内部已用 getCached(TTL.index=8s) 缓存，8 秒内重复请求不重复打东财/腾讯；
+//   - 难取指数(东财)并发受限(≤5)避免冷启动突发被限流；整体调用量极低，不会触发东财 WAF。
+async function mapWithConc(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      out[idx] = await fn(items[idx]).catch(() => null);
     }
-    // 难获取指数：东财 push2delay（并行，后台低频执行，不阻塞刷新）
-    await Promise.all(hard.map(async s => {
-      const r = await fetchEastmoneyIndex(s).catch(() => null);
-      if (r) indexSnapshot.set(s, r);
-    }));
-  })();
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
-function getIndexSnapshot(secids) {
-  const map = new Map();
-  for (const s of secids) if (s && indexSnapshot.has(s)) map.set(s, indexSnapshot.get(s));
-  return map;
+async function fetchAllIndexChanges(secids) {
+  const uniq = [...new Set(secids.filter(Boolean))];
+  const result = new Map();
+  const hard = uniq.filter(isHardIndex);
+  const easy = uniq.filter(s => !isHardIndex(s));
+
+  // 易获取指数：腾讯（一次调用拿全部，内部 8s 缓存）
+  const tCodes = easy.map(secidToTencent).filter(Boolean);
+  if (tCodes.length) {
+    const tIdx = await fetchTencentIndex(tCodes).catch(() => ({}));
+    for (const s of easy) {
+      const tc = secidToTencent(s);
+      if (tc && tIdx[tc]) result.set(s, tIdx[tc]);
+    }
+  }
+  // 难获取指数：东财 push2delay（并发受限 ≤5 + 内部 8s 缓存，避免冷启动突发被限流）
+  const hardResults = await mapWithConc(hard, 5, async (s) => {
+    const r = await fetchEastmoneyIndex(s).catch(() => null);
+    return r ? { s, r } : null;
+  });
+  for (const hr of hardResults) if (hr) result.set(hr.s, hr.r);
+  return result;
 }
 
 // ============ 业务：基金数据 ============
@@ -429,18 +437,9 @@ async function getFundData(symbols) {
   const navMap = new Map();
   await Promise.all(funds.map(async f => { navMap.set(f.code, await getNav(f.code)); }));
 
-  // 指数涨跌%：优先读内存快照（瞬间、不现网打东财）；冷启动/个别缺失时按需实时兜底一次
+  // 指数涨跌%：每次请求实时拉取（易取走腾讯、难取走东财 push2delay），fetcher 内部 8s 缓存保证既新鲜又不频发请求
   const needSecids = [...new Set(funds.map(f => FUND_INDEX_SECID[f.code]).filter(Boolean))];
-  const idxMap = getIndexSnapshot(needSecids);
-  const missIdx = needSecids.filter(s => !idxMap.has(s));
-  if (missIdx.length) {
-    await Promise.all(missIdx.map(async s => {
-      let r = null;
-      if (isHardIndex(s)) r = await fetchEastmoneyIndex(s).catch(() => null);
-      else { const tc = secidToTencent(s); if (tc) { const t = await fetchTencentIndex([tc]).catch(() => ({})); if (t[tc]) r = t[tc]; } }
-      if (r) { idxMap.set(s, r); indexSnapshot.set(s, r); }
-    }));
-  }
+  const idxMap = await fetchAllIndexChanges(needSecids);
 
   return symbols.map((symbol) => {
     const code = symbol.replace(/^(sh|sz|hk)/, '');
@@ -514,8 +513,7 @@ export async function handler(event, context) {
     const params = event.queryStringParameters || {};
     const raw = (params.symbols || '').split(',');
     const symbols = [...new Set(raw.map(normalizeSymbol).filter(Boolean))];
-    refreshNavInBackground();      // 非阻塞：每隔数小时静默刷新内存净值快照
-    refreshIndexInBackground();    // 非阻塞：每 ~20s 静默刷新内存指数涨跌快照
+    refreshNavInBackground();      // 非阻塞：每隔数小时静默刷新内存净值快照（净值每日仅变一次，保留快照）
     const data = await getFundData(symbols);
     return {
       statusCode: 200,
