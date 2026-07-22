@@ -65,7 +65,7 @@
         <tbody id="selfBody"></tbody>
       </table>
     </div>
-    <p class="hint">自选列表保存在浏览器本地，可自由增删。估值 = 单位净值 × (1 + 跟踪指数涨跌幅)，由东财净值与指数实时涨跌计算（不再依赖实时估算接口）；溢价率 = (现价 − 估值) ÷ 估值，买一溢价即“卖出可得溢价”，卖一折价即“买入成本折价”。指数或净值缺失时估值显示“--”并回退到最新单位净值。数据来源：腾讯财经、东方财富。</p>
+    <p class="hint">自选列表保存在浏览器本地，可自由增删。估值 = 单位净值 × (1 + 跟踪指数涨跌幅 × 0.92 预估仓位)，保留 4 位小数，由东财净值与指数实时涨跌计算（不再依赖实时估算接口）；溢价率 = (现价 − 估值) ÷ 估值。指数或净值缺失时估值显示“--”并回退到最新单位净值。场内价格取新浪/腾讯，指数标准品种取腾讯/新浪、中证主题(9 开头)取东方财富。数据来源：新浪财经、腾讯财经、东方财富。</p>
   </section>
 
   <!-- LOF 基金 -->
@@ -88,24 +88,21 @@
           <tr>
             <th data-key="code" class="sortable">代码</th>
             <th data-key="name" class="sortable">名称</th>
-            <th data-key="price" class="sortable num">现价</th>
-            <th data-key="changePct" class="sortable num">涨跌%</th>
-            <th data-key="bid" class="sortable num">买一</th>
-            <th data-key="ask" class="sortable num">卖一</th>
-            <th data-key="dwjz" class="sortable num">单位净值</th>
-            <th data-key="estNav" class="sortable num">估值</th>
-            <th data-key="premiumNow" class="sortable num">溢价率</th>
             <th data-key="bidPremium" class="sortable num">买一溢价</th>
+            <th data-key="bid" class="sortable num">买一</th>
+            <th data-key="estNav" class="sortable num">估值</th>
+            <th data-key="ask" class="sortable num">卖一</th>
             <th data-key="askDiscount" class="sortable num">卖一折价</th>
+            <th data-key="dwjz" class="sortable num">单位净值</th>
+            <th data-key="indexChangePct" class="sortable num">指数涨跌</th>
             <th data-key="indexNm" class="sortable">跟踪指数</th>
-            <th data-key="indexChangePct" class="sortable num">指数涨跌%</th>
             <th class="num">操作</th>
           </tr>
         </thead>
         <tbody id="lofBody"></tbody>
       </table>
     </div>
-    <p class="hint">LOF 基金可在场内（二级市场）与场外（净值）两个价格间套利：场内价格高于净值即“溢价”，可场外申购、场内卖出；折价则反向。指数涨跌% 为跟踪指数真实行情（腾讯）；主动管理型 LOF 无单一跟踪指数，显示 --。数据来源：腾讯财经、东方财富。</p>
+    <p class="hint">LOF 基金可在场内（二级市场）与场外（净值）两个价格间套利：场内买一价高于估值即“买一溢价”（卖出可得溢价），场内卖一价低于估值即“卖一折价”（买入成本折价）。<b>估值 = 单位净值 × (1 + 跟踪指数涨跌幅 × 0.92 预估仓位)</b>，保留 4 位小数；指数或净值缺失时显示“--”。指数涨跌为跟踪指数真实行情：标准 A 股指数（沪深300/中证500/国证系列等）优先取腾讯/新浪，中证主题(9 开头)及特殊指数取东方财富。基金场内价格（买一/卖一）取自新浪/腾讯。数据来源：新浪财经、腾讯财经、东方财富。</p>
   </section>
 
   <!-- 股票行情 -->
@@ -148,7 +145,7 @@
   </section>
 
   <footer class="foot">
-    数据来源：腾讯财经实时行情 · 东方财富净值/分红 ｜ 仅供研究参考，不构成投资建议
+    数据来源：新浪财经 / 腾讯财经实时行情 · 东方财富净值与指数 ｜ 仅供研究参考，不构成投资建议
   </footer>
 
   <script src="app.js"></script>

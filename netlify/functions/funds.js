@@ -1,12 +1,15 @@
 // Netlify Function：/api/funds 代理（LOF 基金行情 + 单位净值 + 估值 + 溢价率/套利）
-// 行情源：腾讯财经 qt.gtimg.cn（GBK，iconv-lite 解码）—— 基金场内价格（买一/卖一/现价）
-// 净值源：东方财富 api.fund.eastmoney.com/f10/lsjz（权威单位净值 dwjz，含前一交易日）
-// 指数涨跌源：东方财富 push2delay.eastmoney.com（镜像域，字段与 push2 一致、沙箱/生产均可返回）
-//            特殊指数（白银期货 fut_ag、港股通新经济 124.HSSCNE、AH优选 2.H50001、方正富邦保险 2.H30540）
-//            也走 push2delay（secid 由 searchapi 反查得到）。A 股标准指数另加腾讯兜底。
 //
-// 估值新算法：估值(estNav) = 单位净值(dwjz) × (1 + 指数涨跌幅%)，不再依赖东方财富实时估算接口
-// （fundgz 实时估值已无法直接获取）。有完整指数映射且单位净值有效时计算，否则回落 "--"。
+// 数据源优先级（按“易获取程度”分流，降低被东财 WAF 拦截/限速的概率）：
+//   1) 基金场内价格（买一/卖一/现价/涨跌%）：优先【新浪 hq.sinajs.cn】（GBK），腾讯 qt.gtimg.cn 兜底。
+//      东财 push2delay 对基金行情不返回买一/卖一（f162/f167 恒为 0），故价格一律不走东财。
+//   2) 指数涨跌：标准 A 股指数（sh/sz 前缀，如沪深300/中证500/国证系列）优先【腾讯】；
+//      中证主题(930xxx)及特殊指数（2.H30540、124.HSSCNE、fut_ag 等）腾讯无行情，走【东财 push2delay】
+//      镜像域（字段与 push2 一致、沙箱/生产均可返回，secid 由 searchapi 反查得到）。
+//   3) 单位净值：东方财富 api.fund.eastmoney.com/f10/lsjz（权威 dwjz，含前一交易日）。
+//
+// 估值算法（v2）：估值(estNav) = 单位净值(dwjz) × (1 + 指数涨跌幅(%) / 100 × 仓位系数)
+//   仓位系数 POSITION = 0.92（基金预估仓位）。有完整指数映射且单位净值有效时计算，否则回落 "--"。
 //
 // 关键：所有上游请求带硬超时（AbortController）。单函数 Netlify 免费档 10s 上限，故本接口
 // 仅处理单批（前端已按每批 10 只分块并发请求），指数与净值各走独立并发，保证超时前返回。
@@ -171,7 +174,9 @@ function getCached(key, ttl) {
 }
 function setCached(key, data) { cache.set(key, { ts: Date.now(), data }); }
 
-// ============ 腾讯基金/股票行情（GBK） ============
+// ============ 腾讯基金/股票行情（GBK） —— 兜底源 ============
+// 返回标准化对象：{ name, price, bid, ask, prevClose, date, time, changePct }
+// 字段（~ 分隔）：p[1]=名称, p[3]=现价, p[4]=昨收, p[9]=买一, p[11]=卖一, p[30]=日期, p[31]=时间, p[32]=涨跌%
 async function fetchTencent(symbols) {
   if (!symbols.length) return {};
   const key = 'tencent:' + symbols.join(',');
@@ -184,7 +189,49 @@ async function fetchTencent(symbols) {
   const out = {};
   const re = /v_(\w+)="([^"]*)";/g;
   let m;
-  while ((m = re.exec(text))) out[m[1]] = m[2].split('~');
+  while ((m = re.exec(text))) {
+    const p = m[2].split('~');
+    if (p.length < 33) continue;
+    const price = parseFloat(p[3]);
+    const bid = parseFloat(p[9]);
+    const ask = parseFloat(p[11]);
+    const prevClose = parseFloat(p[4]) || 0;
+    const changePct = p[32] !== undefined && !isNaN(parseFloat(p[32]))
+      ? parseFloat(p[32]) : (prevClose ? (price - prevClose) / prevClose * 100 : 0);
+    if (isNaN(price) || isNaN(bid) || isNaN(ask)) continue;
+    out[m[1]] = { name: p[1], name2: p[1], price, bid, ask, prevClose, date: p[30] || '', time: p[31] || '', changePct };
+  }
+  setCached(key, out);
+  return out;
+}
+
+// ============ 新浪基金/股票行情（GBK） —— 基金价格主源 ============
+// 返回标准化对象（同 fetchTencent 形状）。字段（, 分隔，基金含五档盘口）：
+//   p[0]=名称, p[2]=昨收, p[3]=现价, p[6]=买一(竞买价), p[13]=卖一(五档盘口卖一价)
+//   注意：新浪 p[7]（竞卖价）对基金不可靠（恒等于现价），卖一须取五档盘口 p[13]。
+async function fetchSina(symbols) {
+  if (!symbols.length) return {};
+  const key = 'sina:' + symbols.join(',');
+  const hit = getCached(key, TTL.tencent);
+  if (hit) return hit;
+  const url = 'https://hq.sinajs.cn/list=' + symbols.join(',');
+  const res = await fetchWithTimeout(url, { headers: { Referer: 'https://finance.sina.com.cn/', 'User-Agent': UA } });
+  const buf = Buffer.from(await res.arrayBuffer());
+  const text = iconv.decode(buf, 'gbk');
+  const out = {};
+  const re = /hq_str_(\w+)="([^"]*)";/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const p = m[2].split(',');
+    if (p.length < 14) continue;
+    const price = parseFloat(p[3]);
+    const bid = parseFloat(p[6]);     // 买一（竞买价）
+    const ask = parseFloat(p[13]);    // 卖一（五档盘口卖一价）
+    const prevClose = parseFloat(p[2]) || 0;
+    if (isNaN(price) || isNaN(bid) || isNaN(ask)) continue;
+    const changePct = prevClose ? (price - prevClose) / prevClose * 100 : 0;
+    out[m[1]] = { name: p[0], price, bid, ask, prevClose, date: p[30] || '', time: p[31] || '', changePct };
+  }
   setCached(key, out);
   return out;
 }
@@ -292,61 +339,111 @@ async function fetchTencentIndex(codes) {
   return out;
 }
 
-// 并发受限批量获取指数涨跌幅。优先东财 push2delay；失败的 A 股标准 secid 用腾讯兜底。
+// 判断某 secid 是否属于“难获取”指数（必须走东财 push2delay）：
+//   - 中证主题指数(代码以 930 开头，如 sh930790 / 2.930875)
+//   - 已是东财数字格式(1.x / 0.x / 2.x / 124.x)，多为中证细分，腾讯无对应符号
+//   - 白银期货 fut_ag、方正富邦保险 2.H30540、港股通新经济 124.HSSCNE 等特殊指数
+// 其余 sh/sz 标准 A 股指数（沪深300/中证500/国证399系列等）易于获取，优先腾讯。
+function isHardIndex(secid) {
+  if (!secid) return false;
+  if (secid === 'fut_ag') return true;
+  if (/^\d+\.\d+/.test(secid)) return true;        // 东财数字格式：1.x / 0.x / 2.x / 124.x
+  const m = /^(sh|sz)(\d{6})$/.exec(secid);
+  if (m && m[2].startsWith('930')) return true;     // 中证主题指数（腾讯无行情）
+  return false;
+}
+
+// 并发受限批量获取指数涨跌幅。
+// 易获取指数（标准 A 股）→ 腾讯优先，失败回退东财；难获取指数（中证9开头/特殊）→ 东财 push2delay。
 async function fetchAllIndexChanges(secids, limit = 6) {
   const uniq = [...new Set(secids.filter(Boolean))];
   const result = new Map();
-  // 第一轮：东财 push2delay。两请求间加微小延迟，降低被限速概率（腾讯兜底作保底）。
-  let i = 0;
-  async function worker() {
-    while (i < uniq.length) {
-      const s = uniq[i++];
+
+  const hard = uniq.filter(isHardIndex);
+  const easy = uniq.filter(s => !isHardIndex(s));
+
+  // 第一轮：难获取指数走东财 push2delay（两请求间加 120ms 延迟，降低限速概率）
+  let hi = 0;
+  async function emWorker() {
+    while (hi < hard.length) {
+      const s = hard[hi++];
       const r = await fetchEastmoneyIndex(s).catch(() => null);
       if (r) result.set(s, r);
       await new Promise(res => setTimeout(res, 120));
     }
   }
-  await Promise.all(Array.from({ length: Math.min(limit, uniq.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(limit, hard.length) }, emWorker));
 
-  // 第二轮：未命中的 A 股标准 secid 用腾讯兜底
-  const missing = uniq.filter(s => !result.has(s));
-  const tCodes = missing.map(secidToTencent).filter(Boolean);
+  // 第二轮：易获取指数优先腾讯（字段顺、易获取、不易被拦截）
+  const tCodes = easy.map(secidToTencent).filter(Boolean);
   if (tCodes.length) {
     const tIdx = await fetchTencentIndex(tCodes).catch(() => ({}));
-    for (const s of missing) {
+    for (const s of easy) {
       const tc = secidToTencent(s);
       if (tc && tIdx[tc]) result.set(s, tIdx[tc]);
     }
   }
+  // 第三轮：腾讯未命中的易获取指数，回退东财
+  const emFallback = easy.filter(s => !result.has(s));
+  let fi = 0;
+  async function emFbWorker() {
+    while (fi < emFallback.length) {
+      const s = emFallback[fi++];
+      const r = await fetchEastmoneyIndex(s).catch(() => null);
+      if (r) result.set(s, r);
+      await new Promise(res => setTimeout(res, 120));
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, emFallback.length) }, emFbWorker));
+
   return result;
 }
 
 // ============ 业务：基金数据 ============
+// 基金预估仓位系数：指数涨跌按此比例折算到基金净值（0.92 = 92% 预估仓位）
+const POSITION = 0.92;
+
 async function getFundData(symbols) {
   if (!symbols.length) return [];
-  const quotes = await fetchTencent(symbols);
+  // 基金价格主源 = 新浪；腾讯作兜底（两者均为易获取源，东财对基金不返回买一/卖一）
+  const [sina, tencent] = await Promise.all([fetchSina(symbols), fetchTencent(symbols)]);
+  const quotes = {};
+  for (const s of symbols) {
+    const sq = sina[s];
+    quotes[s] = (sq && sq.bid > 0 && sq.ask > 0) ? sq : (tencent[s] || null);
+  }
+  // 兜底重试：若个别标的在两侧都缺失（上游偶发限速/截断），短暂停顿后针对缺失项再各取一次并合并
+  const missing = symbols.filter(s => !quotes[s]);
+  if (missing.length) {
+    await new Promise(r => setTimeout(r, 200));
+    const [s2, t2] = await Promise.all([fetchSina(missing), fetchTencent(missing)]);
+    for (const s of missing) {
+      const sq = s2[s];
+      quotes[s] = (sq && sq.bid > 0 && sq.ask > 0) ? sq : (t2[s] || null);
+    }
+  }
   const funds = symbols.map(s => ({ symbol: s, code: s.replace(/^(sh|sz|hk)/, '') }));
   const estMap = await fetchAllNav(funds);
 
-  // 收集本批需要的指数 secid，批量拉涨跌幅（东财优先 + 腾讯兜底）
+  // 收集本批需要的指数 secid，批量拉涨跌幅（易获取走腾讯，难获取走东财）
   const needSecids = [...new Set(funds.map(f => FUND_INDEX_SECID[f.code]).filter(Boolean))];
   const idxMap = await fetchAllIndexChanges(needSecids);
 
   return symbols.map((symbol) => {
     const code = symbol.replace(/^(sh|sz|hk)/, '');
     const q = quotes[symbol];
-    if (!q || !q[1] || !q[3] || isNaN(parseFloat(q[3]))) {
+    if (!q || !q.name || isNaN(q.price) || q.price <= 0) {
       return { code, symbol, name: code, error: true };
     }
-    const name = q[1];
-    const price = parseFloat(q[3]);
-    const prevClose = parseFloat(q[4]) || 0;
-    const chgPct = q[32] !== undefined && !isNaN(parseFloat(q[32]))
-      ? parseFloat(q[32]) : (prevClose ? (price - prevClose) / prevClose * 100 : 0);
-    const bid = parseFloat(q[9]) || 0;
-    const ask = parseFloat(q[11]) || 0;
-    const date = q[30] || '';
-    const time = q[31] || '';
+    const name = q.name;
+    const price = q.price;
+    const prevClose = q.prevClose || 0;
+    const chgPct = (q.changePct !== undefined && !isNaN(q.changePct))
+      ? q.changePct : (prevClose ? (price - prevClose) / prevClose * 100 : 0);
+    const bid = q.bid;
+    const ask = q.ask;
+    const date = q.date || '';
+    const time = q.time || '';
 
     const est = estMap.get(code);
     let dwjz = null, navDate = null, prevDwjz = null;
@@ -364,17 +461,18 @@ async function getFundData(symbols) {
       if (idx) { indexChangePct = idx.changePct; indexNm = idx.name; }
     }
 
-    // 估值（新算法）= 单位净值 × (1 + 指数涨跌幅%)；指数或净值缺失则回落 null
+    // 估值（v2）= 单位净值 × (1 + 指数涨跌幅(%) / 100 × 仓位系数)
     let estNav = null;
     if (dwjz && dwjz > 0 && indexChangePct !== null && !isNaN(indexChangePct)) {
-      estNav = dwjz * (1 + indexChangePct / 100);
+      estNav = dwjz * (1 + (indexChangePct / 100) * POSITION);
     }
 
     // 溢价率以估值为基准（估值缺失则退回单位净值）
     const liveVal = (estNav && estNav > 0) ? estNav : (dwjz || 0);
-    const premiumNow = liveVal ? (price - liveVal) / liveVal * 100 : null;
-    const bidPremium = liveVal ? (bid - liveVal) / liveVal * 100 : null;
-    const askDiscount = liveVal ? (ask - liveVal) / liveVal * 100 : null;
+    const hasLive = liveVal > 0;
+    const premiumNow = hasLive ? (price - liveVal) / liveVal * 100 : null;
+    const bidPremium = hasLive ? (bid - liveVal) / liveVal * 100 : null;
+    const askDiscount = hasLive ? (ask - liveVal) / liveVal * 100 : null;
 
     return {
       code, symbol, name,

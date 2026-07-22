@@ -188,7 +188,7 @@ function isTradingNow(now = new Date()) {
 // ---------- sorting ----------
 const sortState = {
   self:  { key: 'premiumNow', dir: 'desc' },
-  lof:   { key: 'premiumNow', dir: 'desc' },
+  lof:   { key: 'bidPremium', dir: 'desc' },
   stock: { key: 'changePct', dir: 'desc' }
 };
 function attachSort(tableId) {
@@ -240,7 +240,7 @@ function renderSelf(data) {
       <td class="num">${fmt(r.bid, 3)}</td>
       <td class="num">${fmt(r.ask, 3)}</td>
       <td class="num">${fmt(r.dwjz, 4)}${navD ? `<div class="sub">${navD}</div>` : ''}</td>
-      <td class="num">${r.estNav !== null && !isNaN(r.estNav) ? fmt(r.estNav, 3) : '--'}</td>
+      <td class="num">${r.estNav !== null && !isNaN(r.estNav) ? fmt(r.estNav, 4) : '--'}</td>
       <td class="num">${premCell(r.premiumNow, true)}</td>
       <td class="num">${premCell(r.bidPremium, true)}</td>
       <td class="num">${premCell(r.askDiscount, true)}</td>
@@ -251,31 +251,29 @@ function renderSelf(data) {
 }
 
 // ---------- render LOF 基金 ----------
+// 表头顺序：代码、名称、买一溢价、买一、估值、卖一、卖一折价、单位净值、指数涨跌、跟踪指数（+操作）
 function renderLof(data) {
   const body = $('#lofBody');
-  if (!data.length) { body.innerHTML = '<tr><td colspan="14" class="empty">暂无基金，请在上方添加</td></tr>'; return; }
+  if (!data.length) { body.innerHTML = '<tr><td colspan="11" class="empty">暂无基金，请在上方添加</td></tr>'; return; }
   body.innerHTML = applySort(data, 'lof').map(r => {
-    if (r.error) return `<tr><td class="code">${r.code}</td><td>${r.name}</td><td colspan="11" class="muted">行情获取失败</td><td class="num"><button class="btn danger sm" data-del="lof" data-sym="${r.symbol}">移除</button></td></tr>`;
-    const cc = clsFor(r.changePct);
+    if (r.error) return `<tr><td class="code">${r.code}</td><td>${r.name}</td><td colspan="8" class="muted">行情获取失败</td><td class="num"><button class="btn danger sm" data-del="lof" data-sym="${r.symbol}">移除</button></td></tr>`;
     const navD = fmtDate(r.navDate);
     const idx = r.indexNm ? `<span class="idx-nm">${r.indexNm}</span>` : '<span class="muted">--</span>';
     const idxChg = (r.indexChangePct !== null && !isNaN(r.indexChangePct))
       ? `<span class="${clsFor(r.indexChangePct)}">${fmtPct(r.indexChangePct)}</span>`
       : '<span class="muted">--</span>';
+    const estCell = (r.estNav !== null && !isNaN(r.estNav)) ? fmt(r.estNav, 4) : '<span class="muted">--</span>';
     return `<tr>
       <td class="code">${r.code}</td>
       <td class="name">${r.name}</td>
-      <td class="num ${cc}">${fmt(r.price, 3)}</td>
-      <td class="num ${cc}">${fmtPct(r.changePct)}</td>
-      <td class="num">${fmt(r.bid, 3)}</td>
-      <td class="num">${fmt(r.ask, 3)}</td>
-      <td class="num">${fmt(r.dwjz, 4)}${navD ? `<div class="sub">${navD}</div>` : ''}</td>
-      <td class="num">${r.estNav !== null && !isNaN(r.estNav) ? fmt(r.estNav, 3) : '--'}</td>
-      <td class="num">${premCell(r.premiumNow, true)}</td>
       <td class="num">${premCell(r.bidPremium, true)}</td>
+      <td class="num">${fmt(r.bid, 3)}</td>
+      <td class="num">${estCell}</td>
+      <td class="num">${fmt(r.ask, 3)}</td>
       <td class="num">${premCell(r.askDiscount, true)}</td>
-      <td class="idx">${idx}</td>
+      <td class="num">${fmt(r.dwjz, 4)}${navD ? `<div class="sub">${navD}</div>` : ''}</td>
       <td class="num">${idxChg}</td>
+      <td class="idx">${idx}</td>
       <td class="num"><button class="btn danger sm" data-del="lof" data-sym="${r.symbol}">移除</button></td>
     </tr>`;
   }).join('');
