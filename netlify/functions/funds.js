@@ -126,7 +126,7 @@ const FUND_INDEX_SECID = {
   "501045": "sh000300",
   "501047": "sz399975",
   "501048": "sz399975",
-  "501050": "2.H50001",
+  "501050": "sh000170",
   "501057": "sz399976",
   "501058": "sz399976",
   "501059": "sh000824",
@@ -243,7 +243,7 @@ async function fetchEastmoneyIndex(secid) {
   const key = 'idx:' + emSecid;
   const hit = getCached(key, TTL.index);
   if (hit) return hit;
-  const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${encodeURIComponent(emSecid)}&fields=f12,f13,f14,f43,f169,f170`;
+  const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${encodeURIComponent(emSecid)}&fields=f12,f13,f14,f43,f58,f169,f170`;
   const res = await fetchWithTimeout(url, { headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } });
   const j = await res.json();
   const d = j && j.data;
