@@ -253,12 +253,16 @@ async function fetchEastmoneyIndex(secid) {
   return out;
 }
 
-// A 股标准指数 secid -> 腾讯代码（兜底用）
+// A 股标准指数 secid -> 腾讯代码（兜底用）。支持东财数字前缀(1./0.)与腾讯前缀(sh/sz/hk)互转；
+// 2.x / 124.x / fut_ag 等非 A 股标准特殊指数腾讯无对应行情，返回 null（不适用兜底）。
 function secidToTencent(secid) {
-  const m = /^(\d+)\.(\w+)$/.exec(secid || '');
+  if (!secid) return null;
+  if (secid.startsWith('sh') || secid.startsWith('sz') || secid.startsWith('hk')) return secid;
+  const m = /^(\d+)\.(\w+)$/.exec(secid);
   if (!m) return null;
-  const pre = m[1] === '1' ? 'sh' : (m[1] === '0' ? 'sz' : (m[1] === '2' ? 'sh' : null));
-  return pre ? pre + m[2] : null;
+  if (m[1] === '1') return 'sh' + m[2];
+  if (m[1] === '0') return 'sz' + m[2];
+  return null; // 2.x / 124.x / fut_ag 等特殊指数无腾讯兜底
 }
 async function fetchTencentIndex(codes) {
   if (!codes.length) return {};
@@ -286,13 +290,14 @@ async function fetchTencentIndex(codes) {
 async function fetchAllIndexChanges(secids, limit = 6) {
   const uniq = [...new Set(secids.filter(Boolean))];
   const result = new Map();
-  // 第一轮：东财 push2delay
+  // 第一轮：东财 push2delay。两请求间加微小延迟，降低被限速概率（腾讯兜底作保底）。
   let i = 0;
   async function worker() {
     while (i < uniq.length) {
       const s = uniq[i++];
       const r = await fetchEastmoneyIndex(s).catch(() => null);
       if (r) result.set(s, r);
+      await new Promise(res => setTimeout(res, 120));
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, uniq.length) }, worker));
