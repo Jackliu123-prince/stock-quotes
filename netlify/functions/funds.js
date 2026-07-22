@@ -418,15 +418,15 @@ async function getFundData(symbols) {
     const sq = sina[s];
     quotes[s] = (sq && sq.bid > 0 && sq.ask > 0) ? sq : (tencent[s] || null);
   }
-  // 兜底重试：若个别标的在两侧都缺失（上游偶发限速/截断），短暂停顿后针对缺失项再各取一次并合并
+  // 兜底重试：个别标的在批量响应中被偶发截断/限速时，短暂停顿后【逐只】单独向两侧各取一次（规避大批量响应截断）
   const missing = symbols.filter(s => !quotes[s]);
   if (missing.length) {
     await new Promise(r => setTimeout(r, 200));
-    const [s2, t2] = await Promise.all([fetchSina(missing), fetchTencent(missing)]);
-    for (const s of missing) {
-      const sq = s2[s];
-      quotes[s] = (sq && sq.bid > 0 && sq.ask > 0) ? sq : (t2[s] || null);
-    }
+    await Promise.all(missing.map(async s => {
+      const [sq, tq] = await Promise.all([fetchSina([s]), fetchTencent([s])]);
+      const q = (sq[s] && sq[s].bid > 0 && sq[s].ask > 0) ? sq[s] : (tq[s] || null);
+      if (q) quotes[s] = q;
+    }));
   }
   const funds = symbols.map(s => ({ symbol: s, code: s.replace(/^(sh|sz|hk)/, '') }));
   const navMap = new Map();
