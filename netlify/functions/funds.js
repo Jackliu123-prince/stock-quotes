@@ -369,40 +369,37 @@ function isHardIndex(secid) {
   return false;
 }
 
-// 并发批量获取指数涨跌幅。
-// 易获取指数（标准 A 股）→ 腾讯优先，失败回退东财；难获取指数（中证9开头/特殊）→ 东财 push2delay。
-// 难获取指数改为【并行】抓取（一次调用内 ~15 个并发，比逐只串行 120ms 快得多；且本函数每次刷新仅调用一次，
-// 不再像旧版把列表拆 16 个并发请求各自串行打东财而触发限流）。
-async function fetchAllIndexChanges(secids) {
-  const uniq = [...new Set(secids.filter(Boolean))];
-  const result = new Map();
-
-  const hard = uniq.filter(isHardIndex);
-  const easy = uniq.filter(s => !isHardIndex(s));
-
-  // 难获取指数：东财 push2delay（并行，单次调用内完成）
-  await Promise.all(hard.map(async s => {
-    const r = await fetchEastmoneyIndex(s).catch(() => null);
-    if (r) result.set(s, r);
-  }));
-
-  // 易获取指数：腾讯优先（一次调用拿全部）
-  const tCodes = easy.map(secidToTencent).filter(Boolean);
-  if (tCodes.length) {
-    const tIdx = await fetchTencentIndex(tCodes).catch(() => ({}));
-    for (const s of easy) {
-      const tc = secidToTencent(s);
-      if (tc && tIdx[tc]) result.set(s, tIdx[tc]);
+// 指数涨跌% 走“内存快照 + 后台静默刷新”：与净值同理，避免每次刷新都向东财 push2delay 爆发请求被限流。
+//   - indexSnapshot(secid -> {name,changePct}) 常驻内存；刷新时直接读（瞬间），不再现网打东财；
+//   - 非阻塞后台任务每 ~20s 把全部指数（易取走腾讯、难取走东财）重新拉入快照，保证盘中基本新鲜；
+//   - 冷启动/个别缺失时按需在 getFundData 内实时兜底一次（成功后回填快照）。
+const indexSnapshot = new Map();
+let lastIndexRefresh = 0;
+function refreshIndexInBackground() {
+  const now = Date.now();
+  if (now - lastIndexRefresh < 60 * 1000) return;
+  lastIndexRefresh = now;
+  (async () => {
+    const all = [...new Set(Object.values(FUND_INDEX_SECID).filter(Boolean))];
+    const hard = all.filter(isHardIndex);
+    const easy = all.filter(s => !isHardIndex(s));
+    // 易获取指数：腾讯（一次调用拿全部）
+    const tCodes = easy.map(secidToTencent).filter(Boolean);
+    if (tCodes.length) {
+      const tIdx = await fetchTencentIndex(tCodes).catch(() => ({}));
+      for (const s of easy) { const tc = secidToTencent(s); if (tc && tIdx[tc]) indexSnapshot.set(s, tIdx[tc]); }
     }
-  }
-  // 腾讯未命中的易获取指数，回退东财（并行，少量）
-  const emFb = easy.filter(s => !result.has(s));
-  await Promise.all(emFb.map(async s => {
-    const r = await fetchEastmoneyIndex(s).catch(() => null);
-    if (r) result.set(s, r);
-  }));
-
-  return result;
+    // 难获取指数：东财 push2delay（并行，后台低频执行，不阻塞刷新）
+    await Promise.all(hard.map(async s => {
+      const r = await fetchEastmoneyIndex(s).catch(() => null);
+      if (r) indexSnapshot.set(s, r);
+    }));
+  })();
+}
+function getIndexSnapshot(secids) {
+  const map = new Map();
+  for (const s of secids) if (s && indexSnapshot.has(s)) map.set(s, indexSnapshot.get(s));
+  return map;
 }
 
 // ============ 业务：基金数据 ============
@@ -432,9 +429,18 @@ async function getFundData(symbols) {
   const navMap = new Map();
   await Promise.all(funds.map(async f => { navMap.set(f.code, await getNav(f.code)); }));
 
-  // 收集本批需要的指数 secid，批量拉涨跌幅（易获取走腾讯，难获取走东财）
+  // 指数涨跌%：优先读内存快照（瞬间、不现网打东财）；冷启动/个别缺失时按需实时兜底一次
   const needSecids = [...new Set(funds.map(f => FUND_INDEX_SECID[f.code]).filter(Boolean))];
-  const idxMap = await fetchAllIndexChanges(needSecids);
+  const idxMap = getIndexSnapshot(needSecids);
+  const missIdx = needSecids.filter(s => !idxMap.has(s));
+  if (missIdx.length) {
+    await Promise.all(missIdx.map(async s => {
+      let r = null;
+      if (isHardIndex(s)) r = await fetchEastmoneyIndex(s).catch(() => null);
+      else { const tc = secidToTencent(s); if (tc) { const t = await fetchTencentIndex([tc]).catch(() => ({})); if (t[tc]) r = t[tc]; } }
+      if (r) { idxMap.set(s, r); indexSnapshot.set(s, r); }
+    }));
+  }
 
   return symbols.map((symbol) => {
     const code = symbol.replace(/^(sh|sz|hk)/, '');
@@ -508,7 +514,8 @@ export async function handler(event, context) {
     const params = event.queryStringParameters || {};
     const raw = (params.symbols || '').split(',');
     const symbols = [...new Set(raw.map(normalizeSymbol).filter(Boolean))];
-    refreshNavInBackground(); // 非阻塞：每隔数小时静默刷新内存净值快照
+    refreshNavInBackground();      // 非阻塞：每隔数小时静默刷新内存净值快照
+    refreshIndexInBackground();    // 非阻塞：每 ~20s 静默刷新内存指数涨跌快照
     const data = await getFundData(symbols);
     return {
       statusCode: 200,
