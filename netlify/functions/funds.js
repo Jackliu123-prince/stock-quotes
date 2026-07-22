@@ -31,7 +31,7 @@ function fetchWithTimeout(url, options = {}, ms = UPSTREAM_TIMEOUT) {
 // 新增指数型 LOF 时：在此追加 基金代码: '东财secid' 即可（sh 指数→1.XXXXXX，sz 指数→0.XXXXXX）。
 const FUND_INDEX_SECID = {
   "160119": "sh000905",
-  "160135": "sh930725",
+  "160135": "sz399807",
   "160218": "sz399393",
   "160221": "sz399395",
   "160222": "sz399396",
@@ -49,7 +49,7 @@ const FUND_INDEX_SECID = {
   "160635": "sh000808",
   "160637": "sz399006",
   "160638": "sz399991",
-  "160639": "sh930725",
+  "160639": "sz399807",
   "160706": "sh000300",
   "160716": "sh000925",
   "160806": "sh000906",
@@ -62,11 +62,11 @@ const FUND_INDEX_SECID = {
   "161028": "sz399976",
   "161029": "sz399986",
   "161030": "sz399804",
-  "161031": "sh930740",
+  "161031": "sz399803",
   "161032": "sz399998",
   "161033": "sz399432",
   "161035": "sh000808",
-  "161036": "sh930794",
+  "161036": "sh930790",
   "161037": "sh930820",
   "161039": "sh000852",
   "161118": "sz399005",
@@ -118,8 +118,8 @@ const FUND_INDEX_SECID = {
   "501012": "sh930641",
   "501016": "sz399707",
   "501019": "sz399368",
-  "501030": "sh930731",
-  "501031": "sh930731",
+  "501030": "sz399806",
+  "501031": "sz399806",
   "501036": "sh000905",
   "501037": "sh000905",
   "501043": "sh000300",
@@ -233,8 +233,14 @@ async function fetchAllNav(funds, limit = 10) {
 // 1.XXXXXX / 0.XXXXXX 这种数字市场码，直接传 sh000905 会返回空。故在此统一转换。
 function toEmSecid(secid) {
   if (!secid) return secid;
-  if (secid.startsWith('sh')) return '1.' + secid.slice(2);
-  if (secid.startsWith('sz')) return '0.' + secid.slice(2);
+  // 中证主题指数(930xxx)在东财属于 CSI 市场，前缀为 2.（非 sh 对应的 1.）
+  const m = /^(sh|sz)(\d{6})$/.exec(secid);
+  if (m) {
+    const code = m[2];
+    if (code.startsWith('930')) return '2.' + code;   // 中证主题指数：CSI 市场
+    if (m[1] === 'sh') return '1.' + code;            // 上证/沪深300/中证500等
+    if (m[1] === 'sz') return '0.' + code;            // 深证/国证/399xxx 系列
+  }
   if (secid.startsWith('hk')) return '124.' + secid.slice(2);
   return secid; // 已是东财格式：1.x / 0.x / 2.x / 124.x / fut_ag
 }
