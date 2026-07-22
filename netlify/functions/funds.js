@@ -75,7 +75,7 @@ const FUND_INDEX_SECID = {
   "161123": "sz399992",
   "161226": "fut_ag",
   "161227": "sz399330",
-  "161607": "sz399318",
+  "161607": "sz399313",
   "161631": "sh930713",
   "161715": "sz399979",
   "161720": "sz399975",
@@ -228,11 +228,22 @@ async function fetchAllNav(funds, limit = 10) {
 
 // ============ 指数涨跌幅（东方财富 push2delay 镜像，字段与 push2 一致） ============
 // secid -> { name, changePct }。changePct = f170/100（f170 为涨跌幅×100）。
+// 将腾讯风格前缀(sh/sz/hk)转换为东财 push2delay 所需的数字前缀(1./0./124.)
+// 原 FUND_INDEX_SECID 中大量条目使用 sh/sz 前缀（腾讯风格），但东财 push2delay 只认
+// 1.XXXXXX / 0.XXXXXX 这种数字市场码，直接传 sh000905 会返回空。故在此统一转换。
+function toEmSecid(secid) {
+  if (!secid) return secid;
+  if (secid.startsWith('sh')) return '1.' + secid.slice(2);
+  if (secid.startsWith('sz')) return '0.' + secid.slice(2);
+  if (secid.startsWith('hk')) return '124.' + secid.slice(2);
+  return secid; // 已是东财格式：1.x / 0.x / 2.x / 124.x / fut_ag
+}
 async function fetchEastmoneyIndex(secid) {
-  const key = 'idx:' + secid;
+  const emSecid = toEmSecid(secid);
+  const key = 'idx:' + emSecid;
   const hit = getCached(key, TTL.index);
   if (hit) return hit;
-  const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${encodeURIComponent(secid)}&fields=f12,f13,f14,f43,f169,f170`;
+  const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${encodeURIComponent(emSecid)}&fields=f12,f13,f14,f43,f169,f170`;
   const res = await fetchWithTimeout(url, { headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } });
   const j = await res.json();
   const d = j && j.data;
