@@ -55,7 +55,7 @@
             <th data-key="bid" class="sortable num">买一</th>
             <th data-key="ask" class="sortable num">卖一</th>
             <th data-key="dwjz" class="sortable num">单位净值</th>
-            <th data-key="gsz" class="sortable num">估值</th>
+            <th data-key="estNav" class="sortable num">估值</th>
             <th data-key="premiumNow" class="sortable num">溢价率</th>
             <th data-key="bidPremium" class="sortable num">买一溢价</th>
             <th data-key="askDiscount" class="sortable num">卖一折价</th>
@@ -65,7 +65,7 @@
         <tbody id="selfBody"></tbody>
       </table>
     </div>
-    <p class="hint">自选列表保存在浏览器本地，可自由增删。溢价率 = (现价 − 估值) ÷ 估值；买一溢价即“卖出可得溢价”，卖一折价即“买入成本折价”。估值缺失时回退到最新单位净值。数据来源：腾讯财经、东方财富。</p>
+    <p class="hint">自选列表保存在浏览器本地，可自由增删。估值 = 单位净值 × (1 + 跟踪指数涨跌幅)，由东财净值与指数实时涨跌计算（不再依赖实时估算接口）；溢价率 = (现价 − 估值) ÷ 估值，买一溢价即“卖出可得溢价”，卖一折价即“买入成本折价”。指数或净值缺失时估值显示“--”并回退到最新单位净值。数据来源：腾讯财经、东方财富。</p>
   </section>
 
   <!-- LOF 基金 -->
@@ -93,7 +93,7 @@
             <th data-key="bid" class="sortable num">买一</th>
             <th data-key="ask" class="sortable num">卖一</th>
             <th data-key="dwjz" class="sortable num">单位净值</th>
-            <th data-key="gsz" class="sortable num">估值</th>
+            <th data-key="estNav" class="sortable num">估值</th>
             <th data-key="premiumNow" class="sortable num">溢价率</th>
             <th data-key="bidPremium" class="sortable num">买一溢价</th>
             <th data-key="askDiscount" class="sortable num">卖一折价</th>

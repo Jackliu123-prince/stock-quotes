@@ -240,7 +240,7 @@ function renderSelf(data) {
       <td class="num">${fmt(r.bid, 3)}</td>
       <td class="num">${fmt(r.ask, 3)}</td>
       <td class="num">${fmt(r.dwjz, 4)}${navD ? `<div class="sub">${navD}</div>` : ''}</td>
-      <td class="num">${fmt(r.gsz, 3)}</td>
+      <td class="num">${r.estNav !== null && !isNaN(r.estNav) ? fmt(r.estNav, 3) : '--'}</td>
       <td class="num">${premCell(r.premiumNow, true)}</td>
       <td class="num">${premCell(r.bidPremium, true)}</td>
       <td class="num">${premCell(r.askDiscount, true)}</td>
@@ -270,7 +270,7 @@ function renderLof(data) {
       <td class="num">${fmt(r.bid, 3)}</td>
       <td class="num">${fmt(r.ask, 3)}</td>
       <td class="num">${fmt(r.dwjz, 4)}${navD ? `<div class="sub">${navD}</div>` : ''}</td>
-      <td class="num">${fmt(r.gsz, 3)}</td>
+      <td class="num">${r.estNav !== null && !isNaN(r.estNav) ? fmt(r.estNav, 3) : '--'}</td>
       <td class="num">${premCell(r.premiumNow, true)}</td>
       <td class="num">${premCell(r.bidPremium, true)}</td>
       <td class="num">${premCell(r.askDiscount, true)}</td>
