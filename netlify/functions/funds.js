@@ -386,7 +386,7 @@ async function fetchTencentIndex(codes) {
 function isHardIndex(secid) {
   if (!secid) return false;
   if (secid === 'fut_ag') return true;
-  if (/^\d+\.\d+/.test(secid)) return true;        // 东财数字格式：1.x / 0.x / 2.x / 124.x
+  if (/^\d+\.[A-Za-z0-9]/.test(secid)) return true;   // 东财数字格式：1.x / 0.x / 2.x(含 2.Hxxxx 定制) / 124.x
   const m = /^(sh|sz)(\d{6})$/.exec(secid);
   if (m && m[2].startsWith('930')) return true;     // 中证主题指数（腾讯无行情）
   return false;
