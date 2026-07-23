@@ -319,14 +319,22 @@ async function fetchEastmoneyIndex(secid) {
   const key = 'idx:' + emSecid;
   const hit = getCached(key, TTL.index);
   if (hit) return hit;
-  const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${encodeURIComponent(emSecid)}&fields=f12,f13,f14,f43,f58,f169,f170`;
-  const res = await fetchWithTimeout(url, { headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } });
-  const j = await res.json();
-  const d = j && j.data;
-  if (!d || d.f170 === undefined) return null;   // 失败不缓存，下次请求自动重试并沿用 8s 内上次成功值
-  const out = { name: INDEX_NAME_OVERRIDE[secid] || d.f58 || null, changePct: parseFloat(d.f170) / 100 };
-  setCached(key, out);
-  return out;
+  // 失败重试一次（规避东财批量/偶发抖动），仍失败则不缓存、返回 null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const url = `https://push2delay.eastmoney.com/api/qt/stock/get?secid=${encodeURIComponent(emSecid)}&fields=f12,f13,f14,f43,f58,f169,f170`;
+      const res = await fetchWithTimeout(url, { headers: { 'User-Agent': UA, Referer: 'https://quote.eastmoney.com/' } });
+      const j = await res.json();
+      const d = j && j.data;
+      if (d && d.f170 !== undefined) {
+        const out = { name: INDEX_NAME_OVERRIDE[secid] || d.f58 || null, changePct: parseFloat(d.f170) / 100 };
+        setCached(key, out);
+        return out;
+      }
+    } catch (e) { /* 重试 */ }
+    await new Promise(r => setTimeout(r, 120));
+  }
+  return null;
 }
 
 // A 股标准指数 secid -> 腾讯代码（兜底用）。支持东财数字前缀(1./0.)与腾讯前缀(sh/sz/hk)互转；
@@ -345,10 +353,18 @@ async function fetchTencentIndex(codes) {
   const key = 'tidx:' + codes.join(',');
   const hit = getCached(key, TTL.index);
   if (hit) return hit;
-  const url = 'https://qt.gtimg.cn/q=' + codes.join(',');
-  const res = await fetchWithTimeout(url, { headers: { Referer: 'https://finance.qq.com/', 'User-Agent': UA } });
-  const buf = Buffer.from(await res.arrayBuffer());
-  const text = iconv.decode(buf, 'gbk');
+  let text = '';
+  // 失败重试一次（规避腾讯批量响应偶发截断/丢符号）
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const url = 'https://qt.gtimg.cn/q=' + codes.join(',');
+      const res = await fetchWithTimeout(url, { headers: { Referer: 'https://finance.qq.com/', 'User-Agent': UA } });
+      const buf = Buffer.from(await res.arrayBuffer());
+      text = iconv.decode(buf, 'gbk');
+      if (text.includes('=')) break;
+    } catch (e) { /* 重试 */ }
+    await new Promise(r => setTimeout(r, 120));
+  }
   const out = {};
   const re = /v_(\w+)="([^"]*)";/g; let m;
   while ((m = re.exec(text))) {
@@ -409,10 +425,28 @@ async function fetchAllIndexChanges(secids) {
   }
   // 难获取指数：东财 push2delay（并发受限 ≤5 + 内部 8s 缓存，避免冷启动突发被限流）
   const hardResults = await mapWithConc(hard, 5, async (s) => {
-    const r = await fetchEastmoneyIndex(s).catch(() => null);
+    const r = await fetchEastmoneyIndex(s).catch(() => {}) || null;
     return r ? { s, r } : null;
   });
   for (const hr of hardResults) if (hr) result.set(hr.s, hr.r);
+
+  // 兜底：对首次批量未取到的指数，短暂停顿后【逐只单独】重试（规避批量响应偶发截断/丢符号）
+  const missing = uniq.filter(s => !result.get(s));
+  if (missing.length) {
+    await new Promise(r => setTimeout(r, 180));
+    await Promise.all(missing.map(async (s) => {
+      if (isHardIndex(s)) {
+        const r = await fetchEastmoneyIndex(s).catch(() => null);
+        if (r) result.set(s, r);
+      } else {
+        const tc = secidToTencent(s);
+        if (tc) {
+          const r = await fetchTencentIndex([tc]).catch(() => ({}));
+          if (r[tc]) result.set(s, r[tc]);
+        }
+      }
+    }));
+  }
   return result;
 }
 
